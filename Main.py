@@ -2,7 +2,6 @@ import sqlite3
 import tkinter as tk
 from tkinter import messagebox
 
-# Inicializar a base de dados
 def init_db():
     conn = sqlite3.connect('password_manager.db')
     cursor = conn.cursor()

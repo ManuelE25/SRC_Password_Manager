@@ -143,7 +143,7 @@ def open_database():
 
     key = derive_key(password, salt)
     init_db(db_path)
-    launch_app()
+    #launch_app()
 
 # Criar nova base de dados e escolher algoritmo
 def create_database():
@@ -158,7 +158,7 @@ def create_database():
         messagebox.showinfo("Info", "Nenhuma base de dados criada. A aplicação será encerrada.")
         exit()
 
-    enc_algos = ["aes", "chacha", "fernet"]
+    enc_algos = ["aes-256", "chacha20", "fernet"]
     def choose_algo():
         choice = algo_var.get()
         if choice not in enc_algos:
@@ -171,7 +171,7 @@ def create_database():
     chosen_algo = None
     algo_window = tk.Tk()
     algo_window.title("Escolha o Algoritmo de Encriptação")
-    algo_window.geometry("300x200")
+    algo_window.geometry("500x300")
     tk.Label(algo_window, text="Escolha o tipo de encriptação:", font=("Arial", 12)).pack(pady=10)
     algo_var = tk.StringVar(value=enc_algos[0])
     for a in enc_algos:
@@ -191,106 +191,106 @@ def create_database():
 
     key = derive_key(password, salt)
     init_db(db_path)
-    launch_app()
+    #launch_app()
 
-# Funções principais da app
-def add():
-    username = entryName.get()
-    password = entryPassword.get()
-    if username and password:
-        if encryption_algo == "aes":
-            enc_password = encrypt_aes_gcm(key, password)
-        elif encryption_algo == "chacha":
-            enc_password = encrypt_chacha(key, password)
-        else:
-            enc_password = encrypt_fernet(key, password)
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO passwords (username, password) VALUES (?, ?)", (username, enc_password))
-        conn.commit()
-        conn.close()
-        messagebox.showinfo("Sucesso", "Password adicionada!")
-    else:
-        messagebox.showerror("Erro", "Preenche ambos os campos.")
+# # Funções principais da app
+# def add():
+#     username = entryName.get()
+#     password = entryPassword.get()
+#     if username and password:
+#         if encryption_algo == "aes":
+#             enc_password = encrypt_aes_gcm(key, password)
+#         elif encryption_algo == "chacha":
+#             enc_password = encrypt_chacha(key, password)
+#         else:
+#             enc_password = encrypt_fernet(key, password)
+#         conn = sqlite3.connect(db_path)
+#         cursor = conn.cursor()
+#         cursor.execute("INSERT INTO passwords (username, password) VALUES (?, ?)", (username, enc_password))
+#         conn.commit()
+#         conn.close()
+#         messagebox.showinfo("Sucesso", "Password adicionada!")
+#     else:
+#         messagebox.showerror("Erro", "Preenche ambos os campos.")
 
-def get():
-    username = entryName.get()
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    cursor.execute("SELECT password FROM passwords WHERE username = ?", (username,))
-    result = cursor.fetchone()
-    conn.close()
-    if result:
-        try:
-            if encryption_algo == "aes":
-                dec_password = decrypt_aes_gcm(key, result[0])
-            elif encryption_algo == "chacha":
-                dec_password = decrypt_chacha(key, result[0])
-            else:
-                dec_password = decrypt_fernet(key, result[0])
-            messagebox.showinfo("Resultado", f"Password para {username}: {dec_password}")
-        except Exception:
-            messagebox.showerror("Erro", "Password mestra errada ou dados corrompidos!")
-    else:
-        messagebox.showinfo("Resultado", "Utilizador não encontrado.")
+# def get():
+#     username = entryName.get()
+#     conn = sqlite3.connect(db_path)
+#     cursor = conn.cursor()
+#     cursor.execute("SELECT password FROM passwords WHERE username = ?", (username,))
+#     result = cursor.fetchone()
+#     conn.close()
+#     if result:
+#         try:
+#             if encryption_algo == "aes":
+#                 dec_password = decrypt_aes_gcm(key, result[0])
+#             elif encryption_algo == "chacha":
+#                 dec_password = decrypt_chacha(key, result[0])
+#             else:
+#                 dec_password = decrypt_fernet(key, result[0])
+#             messagebox.showinfo("Resultado", f"Password para {username}: {dec_password}")
+#         except Exception:
+#             messagebox.showerror("Erro", "Password mestra errada ou dados corrompidos!")
+#     else:
+#         messagebox.showinfo("Resultado", "Utilizador não encontrado.")
 
-def getlist():
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    cursor.execute("SELECT username, password FROM passwords")
-    rows = cursor.fetchall()
-    conn.close()
-    if rows:
-        mess = "Passwords guardadas:\n"
-        for row in rows:
-            try:
-                if encryption_algo == "aes":
-                    mess += f"{row[0]}: {decrypt_aes_gcm(key, row[1])}\n"
-                elif encryption_algo == "chacha":
-                    mess += f"{row[0]}: {decrypt_chacha(key, row[1])}\n"
-                else:
-                    mess += f"{row[0]}: {decrypt_fernet(key, row[1])}\n"
-            except Exception:
-                mess += f"{row[0]}: ERRO AO DESENCRIPTAR\n"
-        messagebox.showinfo("Lista de passwords", mess)
-    else:
-        messagebox.showinfo("Lista de passwords", "Nenhuma password encontrada.")
+# def getlist():
+#     conn = sqlite3.connect(db_path)
+#     cursor = conn.cursor()
+#     cursor.execute("SELECT username, password FROM passwords")
+#     rows = cursor.fetchall()
+#     conn.close()
+#     if rows:
+#         mess = "Passwords guardadas:\n"
+#         for row in rows:
+#             try:
+#                 if encryption_algo == "aes":
+#                     mess += f"{row[0]}: {decrypt_aes_gcm(key, row[1])}\n"
+#                 elif encryption_algo == "chacha":
+#                     mess += f"{row[0]}: {decrypt_chacha(key, row[1])}\n"
+#                 else:
+#                     mess += f"{row[0]}: {decrypt_fernet(key, row[1])}\n"
+#             except Exception:
+#                 mess += f"{row[0]}: ERRO AO DESENCRIPTAR\n"
+#         messagebox.showinfo("Lista de passwords", mess)
+#     else:
+#         messagebox.showinfo("Lista de passwords", "Nenhuma password encontrada.")
 
-def delete():
-    username = entryName.get()
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM passwords WHERE username = ?", (username,))
-    affected = cursor.rowcount
-    conn.commit()
-    conn.close()
-    if affected:
-        messagebox.showinfo("Sucesso", f"Utilizador {username} eliminado!")
-    else:
-        messagebox.showinfo("INFO", f"Utilizador {username} não encontrado.")
+# def delete():
+#     username = entryName.get()
+#     conn = sqlite3.connect(db_path)
+#     cursor = conn.cursor()
+#     cursor.execute("DELETE FROM passwords WHERE username = ?", (username,))
+#     affected = cursor.rowcount
+#     conn.commit()
+#     conn.close()
+#     if affected:
+#         messagebox.showinfo("Sucesso", f"Utilizador {username} eliminado!")
+#     else:
+#         messagebox.showinfo("INFO", f"Utilizador {username} não encontrado.")
 
-# Interface principal
-def launch_app():
-    global entryName, entryPassword, app
+# # Interface principal
+# def launch_app():
+#     global entryName, entryPassword, app
 
-    app = tk.Tk()
-    app.geometry("450x210")
-    app.title(f"Gestor de Passwords - Algoritmo: {encryption_algo.upper()}")
+#     app = tk.Tk()
+#     app.geometry("450x210")
+#     app.title(f"Gestor de Passwords - Algoritmo: {encryption_algo.upper()}")
 
-    tk.Label(app, text="Utilizador/Site:").grid(row=0, column=0, padx=15, pady=15)
-    entryName = tk.Entry(app)
-    entryName.grid(row=0, column=1, padx=15, pady=15)
+#     tk.Label(app, text="Utilizador/Site:").grid(row=0, column=0, padx=15, pady=15)
+#     entryName = tk.Entry(app)
+#     entryName.grid(row=0, column=1, padx=15, pady=15)
 
-    tk.Label(app, text="Password:").grid(row=1, column=0, padx=10, pady=5)
-    entryPassword = tk.Entry(app)
-    entryPassword.grid(row=1, column=1, padx=10, pady=5)
+#     tk.Label(app, text="Password:").grid(row=1, column=0, padx=10, pady=5)
+#     entryPassword = tk.Entry(app)
+#     entryPassword.grid(row=1, column=1, padx=10, pady=5)
 
-    tk.Button(app, text="Adicionar", command=add).grid(row=2, column=0, padx=15, pady=8, sticky="we")
-    tk.Button(app, text="Pesquisar", command=get).grid(row=2, column=1, padx=15, pady=8, sticky="we")
-    tk.Button(app, text="Listar", command=getlist).grid(row=3, column=0, padx=15, pady=8, sticky="we")
-    tk.Button(app, text="Eliminar", command=delete).grid(row=3, column=1, padx=15, pady=8, sticky="we")
+#     tk.Button(app, text="Adicionar", command=add).grid(row=2, column=0, padx=15, pady=8, sticky="we")
+#     tk.Button(app, text="Pesquisar", command=get).grid(row=2, column=1, padx=15, pady=8, sticky="we")
+#     tk.Button(app, text="Listar", command=getlist).grid(row=3, column=0, padx=15, pady=8, sticky="we")
+#     tk.Button(app, text="Eliminar", command=delete).grid(row=3, column=1, padx=15, pady=8, sticky="we")
 
-    app.mainloop()
+#     app.mainloop()
 
 # Execução inicial
 if __name__ == "__main__":
