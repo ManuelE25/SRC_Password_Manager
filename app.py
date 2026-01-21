@@ -1,670 +1,541 @@
-# app.py
 import tkinter as tk
-from tkinter import simpledialog, messagebox, filedialog, ttk
-import secrets
+from tkinter import messagebox, filedialog, ttk, simpledialog
 import string
+import secrets
 import math
+import random
 import time
 import pyperclip  # pip install pyperclip
-import random     # Necessário para o teclado virtual
 
-from storage import PasswordDatabase, InvalidPasswordException
+import storage
 
-# ================= Lógica Matemática =================
+APP_ESTADO = {
+    "root": None,          # Janela principal
+    "ultimo_toque": 0,     # Para o timeout de inatividade
+    "id_selecionado": None,# Qual password estamos a editar
+    "titulo_antigo": None  # Para saber se mudou o nome
+}
 
-def calculate_entropy(password: str) -> float:
+WIDGETS = {}
+
+# ================= 1. Matemática e Lógica =================
+
+def calcular_entropia(password):
     if not password: return 0
-    pool_size = 0
-    if any(c.islower() for c in password): pool_size += 26
-    if any(c.isupper() for c in password): pool_size += 26
-    if any(c.isdigit() for c in password): pool_size += 10
-    if any(c in string.punctuation for c in password): pool_size += 32
-    if pool_size == 0: return 0
-    return len(password) * math.log2(pool_size)
+    tamanho = len(password)
+    pool = 0
+    if any(c.islower() for c in password): pool += 26
+    if any(c.isupper() for c in password): pool += 26
+    if any(c.isdigit() for c in password): pool += 10
+    if any(c in string.punctuation for c in password): pool += 32
+    
+    if pool == 0: return 0
+    return tamanho * math.log2(pool)
 
-def generate_strong_password(length=16, use_upper=True, use_digits=True, use_symbols=True) -> str:
-    chars = string.ascii_lowercase
-    if use_upper: chars += string.ascii_uppercase
-    if use_digits: chars += string.digits
-    if use_symbols: chars += string.punctuation
-    if not chars: return ""
-    return ''.join(secrets.choice(chars) for _ in range(length))
+def gerar_password_avancada(tamanho, usar_lower, usar_upper, usar_digits, usar_symbols):
+    chars = ""
+    if usar_lower: chars += string.ascii_lowercase
+    if usar_upper: chars += string.ascii_uppercase
+    if usar_digits: chars += string.digits
+    if usar_symbols: chars += string.punctuation
+    
+    if not chars: return "Selecione pelo menos um tipo!"
+    return ''.join(secrets.choice(chars) for _ in range(int(tamanho)))
+# ================= 2. Janelas Especiais (Funcionalidades) =================
 
-# ================= Teclado Virtual Anti-Keylogger =================
+def abrir_gerador_passwords():
+    # Janela flutuante para configurar a geração
+    win = tk.Toplevel(APP_ESTADO["root"])
+    win.title("Gerador Avançado")
+    win.geometry("380x350")
+    
+    # --- CORREÇÃO AQUI ---
+    # Adicionámos "master=win" a todas as variáveis para fixar o erro
+    v_tamanho = tk.IntVar(master=win, value=16)
+    v_lower = tk.BooleanVar(master=win, value=True)
+    v_upper = tk.BooleanVar(master=win, value=True)
+    v_num = tk.BooleanVar(master=win, value=True)
+    v_sym = tk.BooleanVar(master=win, value=True)
+    v_resultado = tk.StringVar(master=win)
+    # ---------------------
 
-def open_virtual_keyboard(parent, target_entry, on_key_press=None):
-    vk = tk.Toplevel(parent)
-    vk.title("Teclado Seguro")
-    vk.geometry("550x330")
-    vk.resizable(False, False)
-    vk.attributes('-topmost', True) 
+    # Função interna para gerar (chamada pelos botões)
+    def gerar(evento_ignore=None):
+        password = gerar_password_avancada(
+            v_tamanho.get(), 
+            v_lower.get(),
+            v_upper.get(), 
+            v_num.get(), 
+            v_sym.get()
+        )
+        v_resultado.set(password)
 
-    lbl_preview = tk.Label(vk, text="Inserção Segura...", font=("Arial", 10, "italic"), fg="gray")
-    lbl_preview.pack(pady=5)
+    # --- Interface ---
+    tk.Label(win, text="Comprimento:").pack(pady=(10, 0))
+    
+    tk.Scale(win, from_=4, to=64, orient="horizontal", variable=v_tamanho, length=250, command=gerar).pack()
+    
+    frame_opts = tk.Frame(win)
+    frame_opts.pack(pady=10)
+    
+    tk.Checkbutton(frame_opts, text="a-z (Minúsculas)", variable=v_lower, command=gerar).pack(anchor="w")
+    tk.Checkbutton(frame_opts, text="A-Z (Maiúsculas)", variable=v_upper, command=gerar).pack(anchor="w")
+    tk.Checkbutton(frame_opts, text="0-9 (Números)", variable=v_num, command=gerar).pack(anchor="w")
+    tk.Checkbutton(frame_opts, text="!@# (Símbolos)", variable=v_sym, command=gerar).pack(anchor="w")
 
-    keys_lower = list(string.ascii_lowercase)
-    keys_upper = list(string.ascii_uppercase)
-    keys_digits = list(string.digits)
-    keys_symbols = list("!@#$%^&*()_+-=[]{}|;:,.<>?/")
+    entry_res = tk.Entry(win, textvariable=v_resultado, justify="center", font=("Consolas", 12), bg="#f0f0f0")
+    entry_res.pack(pady=10, fill="x", padx=20)
 
-    current_keys = keys_lower + keys_digits 
-    is_shifted = False
+    def usar():
+        WIDGETS["password"].delete(0, tk.END)
+        WIDGETS["password"].insert(0, v_resultado.get())
+        atualizar_barra_entropia_da_password() 
+        win.destroy()
 
-    frame_keys = tk.Frame(vk)
-    frame_keys.pack(pady=10, padx=10)
+    frame_btns = tk.Frame(win)
+    frame_btns.pack(pady=10)
+    
+    tk.Button(frame_btns, text="🔄 Regenerar", command=gerar).pack(side="left", padx=5)
+    tk.Button(frame_btns, text="✅ Usar Esta password", command=usar, bg="#ddffdd", height=2).pack(side="left", padx=5)
+    
+    gerar()
+def abrir_teclado_virtual(entry_alvo):
+    win = tk.Toplevel(APP_ESTADO["root"])
+    win.title("Teclado Seguro")
+    win.geometry("600x350")
+    win.attributes('-topmost', True)
+    
+    lbl_info = tk.Label(win, text="Inserção Segura...", fg="gray")
+    lbl_info.pack(pady=5)
+    
+    frame_teclas = tk.Frame(win)
+    frame_teclas.pack(pady=10)
 
-    def insert_char(char):
-        target_entry.insert(tk.END, char)
-        lbl_preview.config(text=f"Inserido: (Protegido)", fg="green")
-        if on_key_press:
-            on_key_press()
+  
+    teclas_normais = string.ascii_lowercase + string.digits
+    teclas_shift   = string.ascii_uppercase + string.punctuation
+    
+    estado = {"shift": False}
 
-    def refresh_layout():
-        for widget in frame_keys.winfo_children():
-            widget.destroy()
+    def desenhar_teclas():
+        for b in frame_teclas.winfo_children(): b.destroy()
+        
 
-        row = 0
-        col = 0
-        max_cols = 12
+        caracteres_atuais = teclas_shift if estado["shift"] else teclas_normais
 
-        for char in current_keys:
-            btn = tk.Button(frame_keys, text=char, width=4, height=2, 
-                            command=lambda c=char: insert_char(c))
-            btn.grid(row=row, column=col, padx=2, pady=2)
+        for i, letra in enumerate(caracteres_atuais):
+            tk.Button(frame_teclas, text=letra, width=5, height=2, 
+                      command=lambda x=letra: inserir(x)).grid(row=i//12, column=i%12, padx=2, pady=2)
+
+    def inserir(char):
+        entry_alvo.insert(tk.END, char)
+        lbl_info.config(text="Inserido (Protegido)", fg="green")
+        atualizar_barra_entropia_da_password()
+
+    def alternar_shift():
+        estado["shift"] = not estado["shift"]
+        desenhar_teclas()
+
+    def apagar_ultimo():
+
+            posicao_atual = entry_alvo.index(tk.INSERT)
+            if posicao_atual > 0:
+                entry_alvo.delete(posicao_atual - 1)
+                atualizar_barra_entropia_da_password()
+
+    # Botões de controle
+    frame_ctrl = tk.Frame(win)
+    frame_ctrl.pack(side="bottom", pady=10)
+    
+    tk.Button(frame_ctrl, text="SHIFT / Símbolos", command=alternar_shift, width=15, height=2).pack(side="left", padx=5)
+    tk.Button(frame_ctrl, text="Apagar", command=apagar_ultimo, bg="#ffdddd", width=10, height=2).pack(side="left", padx=5)
+    
+    desenhar_teclas()
+
+def abrir_auditoria():
+    win = tk.Toplevel(APP_ESTADO["root"])
+    win.title("Auditoria: passwords Repetidas")
+    win.geometry("600x400")
+    
+    tk.Label(win, text="Contas com a mesma password:", font=("Arial", 12, "bold"), fg="red").pack(pady=10)
+    
+    tree_audit = ttk.Treeview(win, columns=("user", "folder"), show="tree headings")
+    tree_audit.heading("#0", text="Grupos de Risco")
+    tree_audit.heading("user", text="Utilizador")
+    tree_audit.heading("folder", text="Pasta")
+    tree_audit.pack(fill="both", expand=True, padx=10, pady=10)
+    
+    # Lógica de agrupamento
+    todas = storage.ler_todas_passwords()
+    mapa_passwords = {} # Dicionario: password -> lista de contas
+    
+    for item in todas:
+        password = item['password']
+        if not password: continue
+        if password not in mapa_passwords: mapa_passwords[password] = []
+        mapa_passwords[password].append(item)
+        
+    encontrou_problema = False
+    for password, lista in mapa_passwords.items():
+        if len(lista) > 1:
+            encontrou_problema = True
+            texto_grupo = f"{len(lista)} contas com a mesma password"
+            pai = tree_audit.insert("", "end", text=texto_grupo, open=True)
+            for item in lista:
+                tree_audit.insert(pai, "end", text=item['titulo'], values=(item['utilizador'], item['pasta']))
+                
+    if not encontrou_problema:
+        tk.Label(win, text="Não existem passwords repetidas", fg="green").pack()
+
+# ================= 3. Funções da Interface Principal =================
+
+def verificar_inatividade():
+    # Verifica se a janela ainda existe antes de continuar
+    if not APP_ESTADO["root"] or not APP_ESTADO["root"].winfo_exists():
+        return
+
+    agora = time.time()
+    if agora - APP_ESTADO["ultimo_toque"] > 300: 
+        APP_ESTADO["root"].destroy()
+        messagebox.showinfo("Bloqueado", "Tempo esgotado por segurança.")
+        menu_inicial()
+    else:
+        # Só agenda o próximo se a janela ainda existir
+        try:
+            APP_ESTADO["root"].after(1000, verificar_inatividade)
+        except:
+            pass
+
+def resetar_timer(event):
+    APP_ESTADO["ultimo_toque"] = time.time()
+
+def atualizar_barra_entropia_da_password(event=None):
+    password = WIDGETS["password"].get()
+    bits = calcular_entropia(password)
+    
+    # Define cor e texto
+    if bits < 40:
+        estilo = "Red.Horizontal.TProgressbar"
+        texto = f"Fraca ({int(bits)} bits)"
+        cor_texto = "red"
+    elif bits < 80:
+        estilo = "Yellow.Horizontal.TProgressbar"
+        texto = f"Média ({int(bits)} bits)"
+        cor_texto = "#FFAA00"
+    else:
+        estilo = "Green.Horizontal.TProgressbar"
+        texto = f"Forte ({int(bits)} bits)"
+        cor_texto = "green"
+        
+    WIDGETS["progress"].config(style=estilo)
+    WIDGETS["progress"]["value"] = min(bits, 100)
+    WIDGETS["lbl_forca"].config(text=texto, fg=cor_texto)
+
+def copiar_password():
+    password = WIDGETS["password"].get()
+    if password:
+        pyperclip.copy(password)
+        messagebox.showinfo("Clipboard", "password copiada! Será limpa em 30s.")
+        # Limpa o clipboard daqui a 30s
+        APP_ESTADO["root"].after(30000, lambda: pyperclip.copy("") if pyperclip.paste() == password else None)
+
+def toggle_ver_password():
+    atual = WIDGETS["password"].cget('show')
+    novo = '' if atual == '*' else '*'
+    WIDGETS["password"].config(show=novo)
+
+# --- CRUD (Criar, Ler, Atualizar, Apagar) ---
+
+def limpar_formulario():
+    APP_ESTADO["id_selecionado"] = None
+    APP_ESTADO["titulo_antigo"] = None
+    
+    WIDGETS["folder"].set('')
+    WIDGETS["title"].delete(0, tk.END)
+    WIDGETS["url"].delete(0, tk.END)
+    WIDGETS["user"].delete(0, tk.END)
+    WIDGETS["password"].delete(0, tk.END)
+    
+    WIDGETS["tree"].selection_remove(WIDGETS["tree"].selection())
+    atualizar_barra_entropia_da_password()
+
+def preencher_formulario(item_db):
+    limpar_formulario()
+    APP_ESTADO["id_selecionado"] = item_db["id"]
+    APP_ESTADO["titulo_antigo"] = item_db["titulo"]
+    
+    WIDGETS["folder"].set(item_db["pasta"])
+    WIDGETS["title"].insert(0, item_db["titulo"])
+    WIDGETS["url"].insert(0, item_db["url"])
+    WIDGETS["user"].insert(0, item_db["utilizador"])
+    WIDGETS["password"].insert(0, item_db["password"])
+    atualizar_barra_entropia_da_password()
+
+def atualizar_lista(pesquisa=""):
+    tree = WIDGETS["tree"]
+    # Limpa visualmente
+    for i in tree.get_children(): tree.delete(i)
+    
+    dados = storage.ler_todas_passwords()
+    
+    # Atualiza lista de pastas no Combobox
+    pastas = sorted(list(set([d['pasta'] for d in dados if d['pasta']])))
+    WIDGETS["folder"]['values'] = pastas
+
+    if pesquisa:
+        # Modo Pesquisa (Lista plana)
+        p = pesquisa.lower()
+        for d in dados:
+            if p in d['titulo'].lower() or p in d['utilizador'].lower() or p in d['pasta'].lower():
+                texto = f"{d['titulo']}   [{d['pasta'] or 'Geral'}]"
+                tree.insert("", "end", text=texto, values=("entry", d['id']))
+    else:
+        # Modo Pastas (Hierarquia)
+        nos_pasta = {}
+        raiz_geral = tree.insert("", "end", text="Geral / Sem Pasta", open=True)
+        
+        for d in dados:
+            pasta = d['pasta']
+            if pasta:
+                if pasta not in nos_pasta:
+                    nos_pasta[pasta] = tree.insert("", "end", text=pasta, open=True)
+                pai = nos_pasta[pasta]
+            else:
+                pai = raiz_geral
             
-            col += 1
-            if col >= max_cols:
-                col = 0
-                row += 1
+            tree.insert(pai, "end", text=d['titulo'], values=("entry", d['id']))
 
-    def toggle_shift():
-        nonlocal is_shifted, current_keys
-        is_shifted = not is_shifted
-        if is_shifted:
-            current_keys = keys_upper + keys_symbols
-            btn_shift.config(bg="#aaccff", relief="sunken")
-        else:
-            current_keys = keys_lower + keys_digits
-            btn_shift.config(bg="#f0f0f0", relief="raised")
-        refresh_layout()
-
-    def shuffle_keys():
-        random.shuffle(current_keys)
-        refresh_layout()
-
-    def backspace():
-        current_pos = target_entry.index(tk.INSERT)
-        if current_pos > 0:
-            target_entry.delete(current_pos - 1)
-            if on_key_press:
-                on_key_press()
-
-    frame_controls = tk.Frame(vk)
-    frame_controls.pack(fill="x", side="bottom", pady=10, padx=10)
-
-    btn_shift = tk.Button(frame_controls, text="SHIFT / Símbolos", command=toggle_shift, height=2, width=15)
-    btn_shift.pack(side="left", padx=5)
-
-    tk.Button(frame_controls, text="🔀 Baralhar", command=shuffle_keys, height=2, width=10).pack(side="left", padx=5)
-    tk.Button(frame_controls, text="⌫ Apagar", command=backspace, height=2, width=10, bg="#ffdddd").pack(side="left", padx=5)
-    tk.Button(frame_controls, text="Fechar", command=vk.destroy, height=2, width=10).pack(side="right", padx=5)
-
-    refresh_layout()
-
-# ================= Diálogos Auxiliares =================
-
-def ask_master_password(prompt: str) -> str:
-    dialog = tk.Tk()
-    dialog.title("Segurança")
-    dialog.geometry("400x180")
-    dialog.resizable(False, False)
+def acao_adicionar():
+    tit = WIDGETS["title"].get()
+    pwd = WIDGETS["password"].get()
     
-    result = {"pw": None}
+    if not tit or not pwd:
+        messagebox.showwarning("Erro", "Título e password são obrigatórios.")
+        return
 
-    tk.Label(dialog, text=prompt, wraplength=350).pack(pady=15)
-    
-    frame_entry = tk.Frame(dialog)
-    frame_entry.pack(pady=5)
-    
-    entry = tk.Entry(frame_entry, show="*", width=30)
-    entry.pack(side="left", padx=5)
-    
-    tk.Button(frame_entry, text="⌨", command=lambda: open_virtual_keyboard(dialog, entry)).pack(side="left")
-    
-    def on_ok():
-        result["pw"] = entry.get()
-        dialog.destroy()
+    # Verificar duplicados pelo titulo (opcional, mas bom pra evitar confusão)
+    todos = storage.ler_todas_passwords()
+    if any(d['titulo'] == tit for d in todos):
+        messagebox.showerror("Erro", "Já existe uma entrada com esse título.")
+        return
+
+    storage.adicionar_password(WIDGETS["folder"].get(), tit, WIDGETS["url"].get(), WIDGETS["user"].get(), pwd)
+    atualizar_lista()
+    limpar_formulario()
+    messagebox.showinfo("Sucesso", "Adicionado!")
+
+def acao_atualizar():
+    if not APP_ESTADO["id_selecionado"]:
+        messagebox.showwarning("Aviso", "Selecione algo para editar.")
+        return
         
-    def on_cancel():
-        dialog.destroy()
-
-    frame_btns = tk.Frame(dialog)
-    frame_btns.pack(pady=15)
-    tk.Button(frame_btns, text="OK", command=on_ok, width=10, bg="#ddffdd").pack(side="left", padx=10)
-    tk.Button(frame_btns, text="Cancelar", command=on_cancel, width=10).pack(side="left", padx=10)
-
-    dialog.bind('<Return>', lambda e: on_ok())
-    entry.focus_set()
-    dialog.mainloop()
+    # Truque simples: Apaga o antigo e cria o novo
+    storage.apagar_password(APP_ESTADO["id_selecionado"])
+    storage.adicionar_password(WIDGETS["folder"].get(), WIDGETS["title"].get(), WIDGETS["url"].get(), WIDGETS["user"].get(), WIDGETS["password"].get())
     
-    return result["pw"]
+    atualizar_lista()
+    limpar_formulario()
+    messagebox.showinfo("Sucesso", "Atualizado!")
 
-def ask_new_db_config(title: str):
-    dialog = tk.Tk()
-    dialog.title(title)
-    dialog.geometry("350x250")
-    dialog.resizable(False, False)
+def acao_apagar():
+    if APP_ESTADO["id_selecionado"]:
+        if messagebox.askyesno("Apagar", "Tem a certeza?"):
+            storage.apagar_password(APP_ESTADO["id_selecionado"])
+            atualizar_lista()
+            limpar_formulario()
+
+def ao_selecionar_tree(event):
+    sel = WIDGETS["tree"].selection()
+    if not sel: return
     
-    result = {"password": None, "algo": "aes-gcm"}
-    
-    tk.Label(dialog, text="Password Mestra:").pack(pady=(15, 5))
-    
-    frame_pw = tk.Frame(dialog)
-    frame_pw.pack(pady=5)
-    entry_pw = tk.Entry(frame_pw, show="*", width=25)
-    entry_pw.pack(side="left", padx=2)
-    tk.Button(frame_pw, text="⌨", command=lambda: open_virtual_keyboard(dialog, entry_pw)).pack(side="left")
-    
-    tk.Label(dialog, text="Algoritmo de Encriptação:").pack(pady=(10, 5))
-    combo_algo = ttk.Combobox(dialog, values=["aes-gcm", "chacha20", "fernet"], state="readonly")
-    combo_algo.current(0)
-    combo_algo.pack(pady=5)
-    
-    def on_confirm():
-        pw = entry_pw.get()
-        if not pw:
-            messagebox.showerror("Erro", "Password vazia.", parent=dialog)
-            return
-        result["password"] = pw
-        result["algo"] = combo_algo.get()
-        dialog.destroy()
-        
-    def on_cancel():
-        dialog.destroy()
-        
-    frame_btns = tk.Frame(dialog)
-    frame_btns.pack(pady=20)
-    tk.Button(frame_btns, text="Criar Cofre", command=on_confirm, width=12, bg="#ddffdd").pack(side="left", padx=10)
-    tk.Button(frame_btns, text="Cancelar", command=on_cancel, width=10).pack(side="left", padx=10)
-    dialog.mainloop()
-    return result["password"], result["algo"]
+    valores = WIDGETS["tree"].item(sel[0], "values")
+    # Se tiver valores ("entry", id), é um item. Se não, é pasta.
+    if valores and valores[0] == "entry":
+        id_db = int(valores[1])
+        # Busca os dados completos
+        todos = storage.ler_todas_passwords()
+        for d in todos:
+            if d['id'] == id_db:
+                preencher_formulario(d)
+                break
+    else:
+        limpar_formulario()
 
-def open_generator_dialog(parent):
-    top = tk.Toplevel(parent)
-    top.title("Gerador")
-    top.geometry("350x300")
-    top.resizable(False, False)
-    
-    var_len = tk.IntVar(value=16)
-    var_upper = tk.BooleanVar(value=True)
-    var_digits = tk.BooleanVar(value=True)
-    var_symbols = tk.BooleanVar(value=True)
-    generated_pw = tk.StringVar()
+# ================= 4. Construção da Janela Principal =================
 
-    tk.Label(top, text="Comprimento:").pack(pady=(10, 0))
-    tk.Scale(top, from_=8, to=64, orient="horizontal", variable=var_len, length=200).pack()
-    
-    frame_checks = tk.Frame(top)
-    frame_checks.pack(pady=5)
-    tk.Checkbutton(frame_checks, text="A-Z", variable=var_upper).pack(anchor="w")
-    tk.Checkbutton(frame_checks, text="0-9", variable=var_digits).pack(anchor="w")
-    tk.Checkbutton(frame_checks, text="!@#", variable=var_symbols).pack(anchor="w")
-
-    entry_result = tk.Entry(top, textvariable=generated_pw, width=30, justify="center", font=("Consolas", 10))
-    entry_result.pack(pady=10)
-
-    def run_generate():
-        pw = generate_strong_password(var_len.get(), var_upper.get(), var_digits.get(), var_symbols.get())
-        generated_pw.set(pw)
-
-    def accept():
-        top.destroy()
-        
-    tk.Button(top, text="Gerar Nova", command=run_generate).pack(pady=2)
-    tk.Button(top, text="Usar esta Password", command=accept, bg="#ddffdd", height=2).pack(pady=10)
-    run_generate()
-    parent.wait_window(top)
-    return generated_pw.get()
-
-# ================= Menus de Entrada =================
-
-def start_menu():
+def abrir_janela_principal(algo_nome):
     root = tk.Tk()
-    root.title("Gestor Seguro")
-    root.geometry("360x200")
-    root.resizable(False, False)
-    action_var = tk.StringVar(value="open")
-
-    def choose_action():
-        choice = action_var.get()
-        root.destroy()
-        if choice == "open": open_database()
-        else: create_database()
-
-    tk.Label(root, text="Gestor de Passwords", font=("Arial", 14, "bold")).pack(pady=15)
-    frame_opts = tk.Frame(root)
-    frame_opts.pack(pady=5)
-    tk.Radiobutton(frame_opts, text="Abrir cofre existente", variable=action_var, value="open").pack(anchor="w")
-    tk.Radiobutton(frame_opts, text="Criar novo cofre", variable=action_var, value="create").pack(anchor="w")
-    tk.Button(root, text="Continuar", command=choose_action, width=20).pack(pady=20)
-    root.mainloop()
-
-def open_database():
-    db_path = filedialog.askopenfilename(title="Abrir cofre", filetypes=[("Cofre", "*.db")])
-    if not db_path:
-        start_menu()
-        return
-    password = ask_master_password(f"Introduz a password mestra:")
-    if not password:
-        start_menu()
-        return
-    pdb = PasswordDatabase(db_path)
-    try:
-        pdb.unlock(password)
-        launch_app(pdb)
-    except Exception as e:
-        messagebox.showerror("Erro", f"Acesso negado ou erro: {e}")
-        start_menu()
-
-def create_database():
-    db_path = filedialog.asksaveasfilename(title="Guardar cofre", defaultextension=".db", filetypes=[("Cofre", "*.db")])
-    if not db_path:
-        start_menu()
-        return
-    password, algo = ask_new_db_config("Novo Cofre")
-    if not password:
-        start_menu()
-        return
-    pdb = PasswordDatabase(db_path)
-    try:
-        pdb.create_new(password, algo=algo)
-        launch_app(pdb)
-    except Exception as e:
-        messagebox.showerror("Erro", str(e))
-        start_menu()
-
-# ================= Aplicação Principal =================
-
-def launch_app(pdb: PasswordDatabase):
-    app = tk.Tk()
-    app.geometry("1000x550") 
-    app.title(f"Cofre Digital - {pdb.encryption_algo.upper()}")
-
-    selected_old_title = None
-
-    # Estilos
+    APP_ESTADO["root"] = root
+    APP_ESTADO["ultimo_toque"] = time.time()
+    
+    root.title(f"SRC Password Manager - {algo_nome.upper()}")
+    root.geometry("1000x580")
+    
+    # Configurar Estilos das Barras
     style = ttk.Style()
     style.theme_use('clam')
     style.configure("Red.Horizontal.TProgressbar", foreground='red', background='red')
     style.configure("Yellow.Horizontal.TProgressbar", foreground='#FFAA00', background='#FFAA00')
     style.configure("Green.Horizontal.TProgressbar", foreground='green', background='green')
     
-    style.configure("Treeview", font=('Arial', 10), rowheight=25)
-    style.configure("Treeview.Heading", font=('Arial', 10, 'bold'))
-
-    # Timeout
-    last_activity = time.time()
-    LOCK_TIMEOUT = 300 
-    def reset_timer(event):
-        nonlocal last_activity
-        last_activity = time.time()
-    def check_inactivity():
-        if time.time() - last_activity > LOCK_TIMEOUT:
-            app.destroy()
-            messagebox.showinfo("Bloqueado", "Tempo esgotado.")
-            start_menu()
-        else:
-            app.after(1000, check_inactivity)
-    app.bind_all("<Any-KeyPress>", reset_timer)
-    app.bind_all("<Any-Button>", reset_timer)
-    app.after(1000, check_inactivity)
-
-    # --- Layout Esquerdo ---
-    frame_left = tk.Frame(app)
-    frame_left.grid(row=0, column=0, rowspan=4, padx=15, pady=15, sticky="nsew") 
+    # Detetar inatividade em qualquer tecla ou clique
+    root.bind_all("<Any-KeyPress>", resetar_timer)
+    root.bind_all("<Any-Button>", resetar_timer)
     
-    app.grid_columnconfigure(0, weight=1)
-    app.grid_columnconfigure(1, weight=2)
-    app.grid_rowconfigure(0, weight=1)
-
+    # Layout Esquerdo (Lista)
+    frame_left = tk.Frame(root)
+    frame_left.pack(side="left", fill="both", expand=True, padx=15, pady=15)
+    
     # Pesquisa
     frame_search = tk.Frame(frame_left)
     frame_search.pack(fill="x", pady=(0, 10))
     tk.Label(frame_search, text="🔍").pack(side="left")
     entry_search = tk.Entry(frame_search)
-    entry_search.pack(side="left", fill="x", expand=True, padx=5)
+    entry_search.pack(side="left", fill="x", expand=True)
+    entry_search.bind("<KeyRelease>", lambda e: atualizar_lista(entry_search.get()))
 
-    tk.Label(frame_left, text="As Minhas Pastas", font=("Arial", 10, "bold")).pack(anchor="w")
-    
     # Treeview
-    tree = ttk.Treeview(frame_left, columns=("type"), show="tree", selectmode="browse")
-    # Agora usamos side="top" para deixar espaço em baixo para o botão de auditoria
+    tree = ttk.Treeview(frame_left, columns=("type", "id"), show="tree", selectmode="browse")
+    tree["displaycolumns"] = () # Esconde as colunas de dados, mostra so a arvore
     tree.pack(side="top", fill="both", expand=True)
+    tree.bind("<<TreeviewSelect>>", ao_selecionar_tree)
+    WIDGETS["tree"] = tree
     
-    scrollbar = tk.Scrollbar(frame_left, orient="vertical", command=tree.yview)
-    scrollbar.pack(side="right", fill="y", before=tree) # 'before' garante que fica ao lado da tree
-    tree.config(yscrollcommand=scrollbar.set)
+    # Botão Auditoria
+    tk.Button(frame_left, text="♻ Verificar passwords Repetidas", command=abrir_auditoria, bg="#ffebcd").pack(fill="x", pady=10)
 
-    # --- Layout Direito ---
-    frame_right = tk.Frame(app)
-    frame_right.grid(row=0, column=1, padx=20, pady=15, sticky="n")
+    # Layout Direito (Formulário)
+    frame_right = tk.Frame(root)
+    frame_right.pack(side="right", fill="both", padx=20, pady=15)
 
-    def create_row(label_text, row):
-        tk.Label(frame_right, text=label_text).grid(row=row, column=0, padx=5, pady=5, sticky="e")
-        if label_text == "Pasta / Categoria:":
-            entry = ttk.Combobox(frame_right, width=43)
+    def criar_linha(rotulo, row, combobox=False):
+        tk.Label(frame_right, text=rotulo).grid(row=row, column=0, sticky="e", padx=5, pady=5)
+        if combobox:
+            w = ttk.Combobox(frame_right, width=43)
         else:
-            entry = tk.Entry(frame_right, width=45)
-        entry.grid(row=row, column=1, padx=5, pady=5)
-        return entry
+            w = tk.Entry(frame_right, width=45)
+        w.grid(row=row, column=1, padx=5, pady=5)
+        return w
 
-    # Campos
-    entry_folder = create_row("Pasta / Categoria:", 0) 
-    entry_title = create_row("Título (Único):", 1)
-    entry_url = create_row("URL:", 2)
-    entry_user = create_row("Utilizador:", 3)
-    
-    tk.Label(frame_right, text="Password:").grid(row=4, column=0, padx=5, pady=5, sticky="e")
-    entry_password = tk.Entry(frame_right, width=45, show="*")
-    entry_password.grid(row=4, column=1, padx=5, pady=5)
+    WIDGETS["folder"] = criar_linha("Pasta / Categoria:", 0, combobox=True)
+    WIDGETS["title"] = criar_linha("Título:", 1)
+    WIDGETS["url"] = criar_linha("URL:", 2)
+    WIDGETS["user"] = criar_linha("Utilizador:", 3)
 
-    lbl_entropy = tk.Label(frame_right, text="Força: N/A", font=("Arial", 8))
-    lbl_entropy.grid(row=5, column=1, sticky="w", padx=5)
-    progress = ttk.Progressbar(frame_right, orient="horizontal", length=275, mode="determinate")
-    progress.grid(row=6, column=1, sticky="w", padx=5, pady=(0, 10))
+    # Password com botões extra
+    tk.Label(frame_right, text="Password:").grid(row=4, column=0, sticky="e", padx=5)
+    entry_pw = tk.Entry(frame_right, width=45, show="*")
+    entry_pw.grid(row=4, column=1, padx=5, pady=5)
+    entry_pw.bind("<KeyRelease>", atualizar_barra_entropia_da_password)
+    WIDGETS["password"] = entry_pw
 
-    def update_entropy(event=None):
-        pwd = entry_password.get()
-        bits = calculate_entropy(pwd)
-        progress["value"] = min(bits, 100)
-        if bits < 40:
-            progress.config(style="Red.Horizontal.TProgressbar")
-            lbl_entropy.config(text=f"Fraca ({int(bits)} bits)", fg="red")
-        elif bits < 80:
-            progress.config(style="Yellow.Horizontal.TProgressbar")
-            lbl_entropy.config(text=f"Média ({int(bits)} bits)", fg="#FFAA00")
-        else:
-            progress.config(style="Green.Horizontal.TProgressbar")
-            lbl_entropy.config(text=f"Forte ({int(bits)} bits)", fg="green")
-    entry_password.bind("<KeyRelease>", update_entropy)
-
-    # --- Barra de Ferramentas do lado Direito ---
+    # Barra de Ferramentas da Password
     frame_tools = tk.Frame(frame_right)
-    frame_tools.grid(row=4, column=2, padx=5, sticky="w")
-    
-    # 1. Mostrar/Esconder
-    def toggle_pw():
-        entry_password.config(show='' if entry_password.cget('show') == '*' else '*')
-    tk.Button(frame_tools, text="👁", command=toggle_pw, width=3).pack(side="left", padx=1)
+    frame_tools.grid(row=4, column=2, sticky="w", padx=5)
+    tk.Button(frame_tools, text="👁", width=3, command=toggle_ver_password).pack(side="left", padx=1)
+    tk.Button(frame_tools, text="⚙", width=3, command=abrir_gerador_passwords).pack(side="left", padx=1)
+    tk.Button(frame_tools, text="⌨", width=3, command=lambda: abrir_teclado_virtual(entry_pw)).pack(side="left", padx=1)
+    tk.Button(frame_tools, text="📋", width=3, command=copiar_password).pack(side="left", padx=1)
 
-    # 2. Gerar
-    def gen_pw():
-        pw = open_generator_dialog(app)
-        if pw:
-            entry_password.delete(0, tk.END)
-            entry_password.insert(0, pw)
-            update_entropy()
-    tk.Button(frame_tools, text="⚙", command=gen_pw, width=3).pack(side="left", padx=1)
+    # Barra de Progresso (Entropia)
+    lbl_forca = tk.Label(frame_right, text="Força: N/A", font=("Arial", 8))
+    lbl_forca.grid(row=5, column=1, sticky="w", padx=5)
+    progress = ttk.Progressbar(frame_right, orient="horizontal", length=275, mode="determinate")
+    progress.grid(row=6, column=1, sticky="w", padx=5)
+    WIDGETS["lbl_forca"] = lbl_forca
+    WIDGETS["progress"] = progress
 
-    # 3. Teclado Virtual
-    def open_kb():
-        open_virtual_keyboard(app, entry_password, on_key_press=lambda: update_entropy())
-    tk.Button(frame_tools, text="⌨", command=open_kb, width=3).pack(side="left", padx=1)
-
-    # 4. Copiar
-    def copy_pw():
-        pw = entry_password.get()
-        if pw:
-            pyperclip.copy(pw)
-            messagebox.showinfo("Info", "Password copiada (30s limpa).")
-            app.after(30000, lambda: pyperclip.copy("") if pyperclip.paste() == pw else None)
-    tk.Button(frame_tools, text="📋", command=copy_pw, width=3).pack(side="left", padx=1)
-
-    # ================= FUNCIONALIDADE: AUDITORIA EM JANELA NOVA =================
-    
-    def load_item_by_title(title):
-        data = pdb.get_entry_by_title(title)
-        if data:
-            nonlocal selected_old_title
-            selected_old_title = data["title"]
-            entry_folder.set(data["folder"])
-            entry_title.delete(0, tk.END)
-            entry_title.insert(0, data["title"])
-            entry_url.delete(0, tk.END)
-            entry_url.insert(0, data["url"])
-            entry_user.delete(0, tk.END)
-            entry_user.insert(0, data["username"])
-            entry_password.delete(0, tk.END)
-            entry_password.insert(0, data["password"])
-            update_entropy()
-
-    def open_audit_window():
-        audit_win = tk.Toplevel(app)
-        audit_win.title("Auditoria de Reutilização de Passwords")
-        audit_win.geometry("600x400")
-        
-        tk.Label(audit_win, text="Contas com a mesma Password:", font=("Arial", 12, "bold"), fg="#d9534f").pack(pady=10)
-        tk.Label(audit_win, text="(Duplo clique num registo para editar)", font=("Arial", 9, "italic")).pack()
-
-        # Treeview para a auditoria
-        cols = ("Username", "Pasta")
-        audit_tree = ttk.Treeview(audit_win, columns=cols, show="tree headings")
-        audit_tree.heading("#0", text="Grupos de Risco")
-        audit_tree.heading("Username", text="Utilizador")
-        audit_tree.heading("Pasta", text="Pasta")
-        audit_tree.column("#0", width=250)
-        
-        audit_tree.pack(fill="both", expand=True, padx=10, pady=10)
-
-        entries = pdb.list_entries()
-        pass_map = {} 
-
-        for item in entries:
-            pwd = item['password']
-            if not pwd: continue
-            if pwd in pass_map:
-                pass_map[pwd].append(item)
-            else:
-                pass_map[pwd] = [item]
-        
-        reused_count = 0
-        group_idx = 1
-        
-        for pwd, items in pass_map.items():
-            if len(items) > 1:
-                reused_count += 1
-                # NÓ PAI GENÉRICO (SEM PASSWORD)
-                display_text = f"⚠️ Grupo de Risco #{group_idx} ({len(items)} contas)"
-                parent_id = audit_tree.insert("", "end", text=display_text, open=True)
-                group_idx += 1
-                
-                for item in items:
-                    audit_tree.insert(parent_id, "end", text=item['title'], values=(item['username'], item['folder']), tags=(item['title'],))
-
-        if reused_count == 0:
-            tk.Label(audit_win, text="Excelente! Nenhuma reutilização encontrada.", fg="green").pack()
-        
-        def on_audit_double_click(event):
-            item_id = audit_tree.selection()[0]
-            vals = audit_tree.item(item_id, "values")
-            if vals:
-                title_to_load = audit_tree.item(item_id, "text")
-                load_item_by_title(title_to_load)
-                audit_win.destroy()
-                messagebox.showinfo("Editar", f"Carregado: {title_to_load}\nAltere a password agora.")
-
-        audit_tree.bind("<Double-1>", on_audit_double_click)
-
-    # --- BOTÃO DE AUDITORIA NO FUNDO DO FRAME ESQUERDO ---
-    frame_audit_btn = tk.Frame(frame_left)
-    frame_audit_btn.pack(side="bottom", fill="x", padx=10, pady=10)
-    
-    tk.Button(frame_audit_btn, text="♻ Verificar Passwords Repetidas", command=open_audit_window, bg="#ffebcd").pack(fill="x")
-
-    # --- Lógica CRUD ---
-
-    def clear_form():
-        nonlocal selected_old_title
-        selected_old_title = None
-        entry_folder.set('')
-        entry_title.delete(0, tk.END)
-        entry_url.delete(0, tk.END)
-        entry_user.delete(0, tk.END)
-        entry_password.delete(0, tk.END)
-        update_entropy()
-        for item in tree.selection():
-            tree.selection_remove(item)
-
-    def refresh_list(search_query=""):
-        for item in tree.get_children():
-            tree.delete(item)
-            
-        entries = pdb.list_entries()
-        existing_folders = pdb.get_all_folders()
-        entry_folder['values'] = existing_folders
-
-        if search_query:
-            query = search_query.lower()
-            for item in entries:
-                title = item["title"]
-                folder = item["folder"]
-                if (query in title.lower()) or (query in folder.lower()) or (query in item["username"].lower()):
-                    display_text = f"{title}   [{folder if folder else 'Geral'}]"
-                    tree.insert("", "end", text=display_text, values=("entry", title)) 
-            return
-        
-        folder_nodes = {}
-        root_general = tree.insert("", "end", text="Geral / Sem Pasta", open=True)
-        
-        for item in entries:
-            folder = item["folder"]
-            title = item["title"]
-            
-            if folder:
-                if folder not in folder_nodes:
-                    folder_id = tree.insert("", "end", text=folder, open=True)
-                    folder_nodes[folder] = folder_id
-                parent_id = folder_nodes[folder]
-            else:
-                parent_id = root_general
-            
-            tree.insert(parent_id, "end", text=title, values=("entry", title))
-
-    def on_search(event):
-        query = entry_search.get().strip()
-        refresh_list(query)
-    entry_search.bind("<KeyRelease>", on_search)
-
-    def on_add():
-        folder = entry_folder.get().strip()
-        title = entry_title.get().strip()
-        url = entry_url.get().strip()
-        user = entry_user.get().strip()
-        pw = entry_password.get()
-        
-        if not title or not pw:
-            messagebox.showwarning("Faltam dados", "Título e Password são obrigatórios.")
-            return
-
-        if pdb.get_entry_by_title(title) is not None:
-            messagebox.showerror("Erro", f"O título '{title}' já existe.\nUse outro nome.")
-            return
-
-        try:
-            pdb.add_entry(folder, title, url, user, pw)
-            messagebox.showinfo("Sucesso", "Adicionado.")
-            entry_search.delete(0, tk.END)
-            refresh_list()
-            clear_form()
-        except Exception as e:
-            messagebox.showerror("Erro", str(e))
-
-    def on_update():
-        nonlocal selected_old_title
-        if selected_old_title is None:
-            messagebox.showwarning("Aviso", "Selecione um item (filho de uma pasta) para editar.")
-            return
-
-        new_folder = entry_folder.get().strip()
-        new_title = entry_title.get().strip()
-        url = entry_url.get().strip()
-        user = entry_user.get().strip()
-        pw = entry_password.get()
-
-        if not new_title or not pw:
-            messagebox.showwarning("Erro", "Título e Password são obrigatórios.")
-            return
-
-        if new_title != selected_old_title:
-            if pdb.get_entry_by_title(new_title) is not None:
-                messagebox.showerror("Erro", f"Já existe outro item com o nome '{new_title}'.")
-                return
-
-        try:
-            pdb.delete_entry(selected_old_title)
-            pdb.add_entry(new_folder, new_title, url, user, pw)
-            messagebox.showinfo("Sucesso", "Atualizado.")
-            entry_search.delete(0, tk.END)
-            refresh_list()
-            clear_form()
-        except Exception as e:
-            messagebox.showerror("Erro", str(e))
-
-    def on_delete():
-        title = entry_title.get().strip()
-        if not title: return
-
-        target = selected_old_title if selected_old_title else title
-        
-        if messagebox.askyesno("Apagar", f"Eliminar '{target}'?"):
-            pdb.delete_entry(target)
-            entry_search.delete(0, tk.END)
-            refresh_list()
-            clear_form()
-
-    def on_tree_select(event):
-        nonlocal selected_old_title
-        selected_items = tree.selection()
-        if not selected_items: return
-        item_id = selected_items[0]
-        item_values = tree.item(item_id, "values")
-        
-        if not (item_values and item_values[0] == "entry"):
-            clear_form()
-            return
-
-        real_title = item_values[1]
-        data = pdb.get_entry_by_title(real_title)
-        
-        if data:
-            selected_old_title = data["title"]
-            entry_folder.set(data["folder"])
-            entry_title.delete(0, tk.END)
-            entry_title.insert(0, data["title"])
-            entry_url.delete(0, tk.END)
-            entry_url.insert(0, data["url"])
-            entry_user.delete(0, tk.END)
-            entry_user.insert(0, data["username"])
-            entry_password.delete(0, tk.END)
-            entry_password.insert(0, data["password"])
-            update_entropy()
-
-    tree.bind("<<TreeviewSelect>>", on_tree_select)
-
-    # --- Botões ---
+    # Botões de Ação
     frame_btns = tk.Frame(frame_right)
-    frame_btns.grid(row=7, column=0, columnspan=3, pady=25)
+    frame_btns.grid(row=8, column=0, columnspan=3, pady=30)
+    
+    tk.Button(frame_btns, text="Adicionar", command=acao_adicionar, bg="#ddffdd", width=12).pack(side="left", padx=5)
+    tk.Button(frame_btns, text="Atualizar", command=acao_atualizar, bg="#fffddd", width=12).pack(side="left", padx=5)
+    tk.Button(frame_btns, text="Limpar", command=limpar_formulario, width=8).pack(side="left", padx=5)
+    tk.Button(frame_btns, text="Eliminar", command=acao_apagar, bg="#ffdddd", width=10).pack(side="left", padx=15)
 
-    tk.Button(frame_btns, text="Adicionar", command=on_add, bg="#ddffdd", width=12).pack(side="left", padx=5)
-    tk.Button(frame_btns, text="Atualizar", command=on_update, bg="#fffddd", width=12).pack(side="left", padx=5)
-    tk.Button(frame_btns, text="Limpar", command=clear_form, width=8).pack(side="left", padx=5)
-    tk.Button(frame_btns, text="Eliminar", command=on_delete, bg="#ffdddd", width=10).pack(side="left", padx=15)
+    tk.Button(root, text="Sair", command=root.destroy, bg="#e0e0e0").place(relx=1.0, rely=1.0, anchor="se", x=-10, y=-10)
 
-    btn_exit = tk.Button(app, text="Sair", command=app.destroy, bg="#e0e0e0", width=10)
-    btn_exit.place(relx=1.0, rely=1.0, anchor="se", x=-10, y=-10)
+    atualizar_lista()
+    verificar_inatividade() # Começa o timer
+    root.mainloop()
 
-    refresh_list()
-    app.mainloop()
+# ================= 5. Menus de Entrada =================
+
+def menu_inicial():
+    root = tk.Tk()
+    root.title("Gestor Seguro")
+    root.geometry("350x200")
+    
+    escolha = {"tipo": None}
+
+    def ir_abrir(): escolha["tipo"] = "abrir"; root.destroy()
+    def ir_criar(): escolha["tipo"] = "criar"; root.destroy()
+
+    tk.Label(root, text="Gestor de Passwords", font=("Arial", 14, "bold")).pack(pady=20)
+    tk.Button(root, text="Abrir cofre existente", command=ir_abrir, width=20).pack(pady=5)
+    tk.Button(root, text="Criar novo cofre", command=ir_criar, width=20).pack(pady=5)
+    root.mainloop()
+    
+    if not escolha["tipo"]: return # Fechou a janela
+
+    if escolha["tipo"] == "abrir":
+        db_path = filedialog.askopenfilename(title="Abrir", filetypes=[("Cofre", "*.db")])
+        if not db_path: return menu_inicial()
+        
+        storage.configurar_storage(db_path)
+        
+        # Loop login
+        while True:
+            # Janela invisível para o dialogo
+            tmp = tk.Tk(); tmp.withdraw()
+            pwd = simpledialog.askstring("Login", "Password Mestra:", show="*")
+            tmp.destroy()
+            
+            if not pwd: return menu_inicial() # Cancelou
+            
+            if storage.tentar_abrir_cofre(pwd):
+                abrir_janela_principal(storage.ALGORITMO_ATUAL)
+                break
+            else:
+                messagebox.showerror("Erro", "Password Errada!")
+
+    elif escolha["tipo"] == "criar":
+        db_path = filedialog.asksaveasfilename(title="Novo", defaultextension=".db", filetypes=[("Cofre", "*.db")])
+        if not db_path: return menu_inicial()
+        
+        # Diálogo customizado para password + algoritmo
+        cfg = {"pw": None, "algo": "aes-gcm"}
+        
+        d = tk.Toplevel()
+        d.title("Configurar")
+        d.geometry("300x250")
+        tk.Label(d, text="Nova Password Mestra:").pack(pady=5)
+        e = tk.Entry(d, show="*"); e.pack()
+        tk.Label(d, text="Algoritmo:").pack(pady=5)
+        c = ttk.Combobox(d, values=["aes-gcm", "chacha20", "fernet"], state="readonly")
+        c.current(0); c.pack()
+        
+        def ok():
+            if not e.get(): return
+            cfg["pw"] = e.get()
+            cfg["algo"] = c.get()
+            d.destroy()
+            
+        tk.Button(d, text="Criar", command=ok, bg="#ddffdd").pack(pady=20)
+        # Espera fechar
+        # Precisamos de um root temporario para o wait_window funcionar se o menu ja fechou
+        dummy = tk.Tk(); dummy.withdraw()
+        d.transient(dummy)
+        d.wait_window()
+        dummy.destroy()
+        
+        if cfg["pw"]:
+            storage.configurar_storage(db_path)
+            storage.criar_novo_cofre(cfg["pw"], cfg["algo"])
+            abrir_janela_principal(cfg["algo"])
+        else:
+            menu_inicial()
 
 if __name__ == "__main__":
-    start_menu()
+    menu_inicial()

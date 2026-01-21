@@ -1,173 +1,134 @@
 # storage.py
 import sqlite3
 import os
-from typing import List, Tuple, Optional, Dict
-from crypto_utils import (
-    derive_key, 
-    encrypt_aes_gcm, decrypt_aes_gcm,
-    encrypt_chacha20, decrypt_chacha20,
-    encrypt_fernet, decrypt_fernet
-)
+import crypto_utils as crypto
 
-class InvalidPasswordException(Exception):
-    pass
+# Variáveis Globais de Estado
+CAMINHO_DB = None
+CHAVE_ATUAL = None
+ALGORITMO_ATUAL = "aes-gcm" # Padrão
 
-class PasswordDatabase:
-    def __init__(self, db_path: str):
-        self.db_path = db_path
-        self.key: Optional[bytes] = None
-        self.encryption_algo = "aes-gcm"
-        self._init_db_structure()
+def conectar():
+    return sqlite3.connect(CAMINHO_DB)
 
-    def _init_db_structure(self):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS metadata (
-                key TEXT PRIMARY KEY,
-                value BLOB
-            );
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS entries (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                folder TEXT,
-                title TEXT NOT NULL,
-                url TEXT,
-                username TEXT,
-                password TEXT NOT NULL
-            );
-        """)
-        conn.commit()
-        conn.close()
-
-    def _encrypt_data(self, plaintext: str) -> str:
-        if not plaintext: return ""
-        if self.encryption_algo == "aes-gcm": return encrypt_aes_gcm(self.key, plaintext)
-        elif self.encryption_algo == "chacha20": return encrypt_chacha20(self.key, plaintext)
-        elif self.encryption_algo == "fernet": return encrypt_fernet(self.key, plaintext)
-        else: raise ValueError(f"Algoritmo não suportado: {self.encryption_algo}")
-
-    def _decrypt_data(self, ciphertext: str) -> str:
-        if not ciphertext: return ""
-        if self.encryption_algo == "aes-gcm": return decrypt_aes_gcm(self.key, ciphertext)
-        elif self.encryption_algo == "chacha20": return decrypt_chacha20(self.key, ciphertext)
-        elif self.encryption_algo == "fernet": return decrypt_fernet(self.key, ciphertext)
-        else: raise ValueError(f"Algoritmo não suportado: {self.encryption_algo}")
-
-    def create_new(self, password: str, algo: str = "aes-gcm"):
-        self.encryption_algo = algo
-        salt = os.urandom(16)
-        key = derive_key(password, salt)
-        self.key = key 
-        validation_token = self._encrypt_data("CHECK_VALID")
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)", ("salt", salt))
-        cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)", ("algo", algo.encode()))
-        cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)", ("validation", validation_token.encode()))
-        conn.commit()
-        conn.close()
-
-    def unlock(self, password: str):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT value FROM metadata WHERE key='salt'")
-        row_salt = cursor.fetchone()
-        if not row_salt:
-            conn.close()
-            raise ValueError("Ficheiro inválido (Salt em falta).")
-        salt = row_salt[0]
-        cursor.execute("SELECT value FROM metadata WHERE key='algo'")
-        row_algo = cursor.fetchone()
-        if row_algo: self.encryption_algo = row_algo[0].decode()
-        else: self.encryption_algo = "aes-gcm"
-        cursor.execute("SELECT value FROM metadata WHERE key='validation'")
-        row_val = cursor.fetchone()
-        conn.close()
-        key = derive_key(password, salt)
-        self.key = key 
-        if row_val:
-            validation_token = row_val[0].decode()
-            try:
-                check = self._decrypt_data(validation_token)
-                if check != "CHECK_VALID": raise InvalidPasswordException()
-            except Exception:
-                self.key = None
-                raise InvalidPasswordException("Password incorreta.")
-
-    def add_entry(self, folder: str, title: str, url: str, username: str, password_text: str) -> None:
-        if not self.key: raise Exception("Base de dados bloqueada.")
-        enc_folder = self._encrypt_data(folder)
-        enc_title = self._encrypt_data(title)
-        enc_url = self._encrypt_data(url)
-        enc_user = self._encrypt_data(username)
-        enc_pass = self._encrypt_data(password_text)
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO entries (folder, title, url, username, password) VALUES (?, ?, ?, ?, ?)",
-            (enc_folder, enc_title, enc_url, enc_user, enc_pass)
-        )
-        conn.commit()
-        conn.close()
-
-    def list_entries(self) -> List[Dict[str, str]]:
-        if not self.key: raise Exception("Base de dados bloqueada.")
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT folder, title, url, username, password FROM entries")
-        rows = cursor.fetchall()
-        conn.close()
-        decoded_list = []
-        for enc_folder, enc_title, enc_url, enc_user, enc_pass in rows:
-            try:
-                decoded_list.append({
-                    "folder": self._decrypt_data(enc_folder),
-                    "title": self._decrypt_data(enc_title),
-                    "url": self._decrypt_data(enc_url),
-                    "username": self._decrypt_data(enc_user),
-                    "password": self._decrypt_data(enc_pass)
-                })
-            except:
-                continue
-        decoded_list.sort(key=lambda x: (x["folder"], x["title"]))
-        return decoded_list
-
-    def get_entry_by_title(self, target_title: str) -> Optional[Dict[str, str]]:
-        all_entries = self.list_entries()
-        for entry in all_entries:
-            if entry["title"] == target_title:
-                return entry
-        return None
-
-    def delete_entry(self, target_title: str) -> int:
-        if not self.key: raise Exception("Base de dados bloqueada.")
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, title FROM entries")
-        rows = cursor.fetchall()
-        id_to_delete = None
-        for row_id, enc_title in rows:
-            try:
-                dec_title = self._decrypt_data(enc_title)
-                if dec_title == target_title:
-                    id_to_delete = row_id
-                    break
-            except:
-                continue
-        affected = 0
-        if id_to_delete:
-            cursor.execute("DELETE FROM entries WHERE id = ?", (id_to_delete,))
-            affected = cursor.rowcount
-            conn.commit()
-        conn.close()
-        return affected
+def configurar_storage(caminho):
+    global CAMINHO_DB
+    CAMINHO_DB = caminho
     
-    def get_all_folders(self) -> List[str]:
-        entries = self.list_entries()
-        folders = set()
-        for e in entries:
-            if e["folder"]: 
-                folders.add(e["folder"])
-        return sorted(list(folders))
+    conn = conectar()
+    # Tabela de configurações
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS metadata (
+            key TEXT PRIMARY KEY,
+            value BLOB
+        );
+    """)
+    # Tabela de passwords
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pasta TEXT,
+            titulo TEXT,
+            url TEXT,
+            usuario TEXT,
+            password TEXT
+        );
+    """)
+    conn.commit()
+    conn.close()
+
+def criar_novo_cofre(password_mestra, algoritmo_escolhido="aes-gcm"):
+    global CHAVE_ATUAL, ALGORITMO_ATUAL
+    
+    ALGORITMO_ATUAL = algoritmo_escolhido
+    salt = os.urandom(16)
+    CHAVE_ATUAL = crypto.criar_chave_secreta(password_mestra, salt)
+    
+    # Validação para testar se a password está certa no futuro
+    teste_validacao = crypto.cifrar(ALGORITMO_ATUAL, CHAVE_ATUAL, "CHECK_OK")
+    
+    conn = conectar()
+    # Guardamos o Sal, o Algoritmo e a Validação
+    conn.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)", ("salt", salt))
+    conn.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)", ("algo", algoritmo_escolhido.encode()))
+    conn.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)", ("val", teste_validacao.encode()))
+    conn.commit()
+    conn.close()
+
+def tentar_abrir_cofre(password_mestra):
+    global CHAVE_ATUAL, ALGORITMO_ATUAL
+    
+    conn = conectar()
+    cursor = conn.cursor()
+    
+    row_salt = cursor.execute("SELECT value FROM metadata WHERE key='salt'").fetchone()
+    row_algo = cursor.execute("SELECT value FROM metadata WHERE key='algo'").fetchone()
+    row_val = cursor.execute("SELECT value FROM metadata WHERE key='val'").fetchone()
+    conn.close()
+    
+    if not row_salt or not row_val:
+        return False
+        
+    salt = row_salt[0]
+    # Se existir algoritmo salvo, usa-o, senão usa o padrão aes-gcm
+    ALGORITMO_ATUAL = row_algo[0].decode() if row_algo else "aes-gcm"
+    
+    chave_tentativa = crypto.criar_chave_secreta(password_mestra, salt)
+    
+    # Tenta decifrar a validação
+    resultado = crypto.decifrar(ALGORITMO_ATUAL, chave_tentativa, row_val[0].decode())
+    
+    if resultado == "CHECK_OK":
+        CHAVE_ATUAL = chave_tentativa
+        return True
+    return False
+
+def adicionar_password(pasta, titulo, url, usuario, password):
+    if not CHAVE_ATUAL: return False
+    
+    # Cifra tudo com o algoritmo atual
+    p = crypto.cifrar(ALGORITMO_ATUAL, CHAVE_ATUAL, pasta)
+    t = crypto.cifrar(ALGORITMO_ATUAL, CHAVE_ATUAL, titulo)
+    u = crypto.cifrar(ALGORITMO_ATUAL, CHAVE_ATUAL, url)
+    user = crypto.cifrar(ALGORITMO_ATUAL, CHAVE_ATUAL, usuario)
+    s = crypto.cifrar(ALGORITMO_ATUAL, CHAVE_ATUAL, password)
+    
+    conn = conectar()
+    conn.execute(
+        "INSERT INTO entries (pasta, titulo, url, usuario, password) VALUES (?, ?, ?, ?, ?)",
+        (p, t, u, user, s)
+    )
+    conn.commit()
+    conn.close()
+    return True
+
+def ler_todas_passwords():
+    if not CHAVE_ATUAL: return []
+    
+    conn = conectar()
+    linhas = conn.execute("SELECT id, pasta, titulo, url, usuario, password FROM entries").fetchall()
+    conn.close()
+    
+    lista = []
+    for pid, p, t, u, usr, s in linhas:
+        try:
+            item = {
+                "id": pid,
+                "pasta": crypto.decifrar(ALGORITMO_ATUAL, CHAVE_ATUAL, p),
+                "titulo": crypto.decifrar(ALGORITMO_ATUAL, CHAVE_ATUAL, t),
+                "url": crypto.decifrar(ALGORITMO_ATUAL, CHAVE_ATUAL, u),
+                "utilizador": crypto.decifrar(ALGORITMO_ATUAL, CHAVE_ATUAL, usr),
+                "password": crypto.decifrar(ALGORITMO_ATUAL, CHAVE_ATUAL, s)
+            }
+            lista.append(item)
+        except:
+            continue
+            
+    lista.sort(key=lambda x: (x['pasta'], x['titulo']))
+    return lista
+
+def apagar_password(id_reg):
+    conn = conectar()
+    conn.execute("DELETE FROM entries WHERE id = ?", (id_reg,))
+    conn.commit()
+    conn.close()
