@@ -1,97 +1,7 @@
-# # storage.py
-# import os
-# import sqlite3
-# from typing import List, Tuple, Optional
-
-
-# class PasswordDatabase:
-#     def __init__(self, db_path: str, encryption_algo: str, key: bytes):
-#         self.db_path = db_path
-#         self.encryption_algo = encryption_algo  # "aes-gcm" | "chacha20" | "fernet"
-#         self.key = key
-#         self._init_db()
-
-#     def _init_db(self):
-#         conn = sqlite3.connect(self.db_path)
-#         cursor = conn.cursor()
-#         cursor.execute("""
-#             CREATE TABLE IF NOT EXISTS passwords (
-#                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-#                 username TEXT NOT NULL,
-#                 password TEXT NOT NULL
-#             );
-#         """)
-#         conn.commit()
-#         conn.close()
-
-#     @staticmethod
-#     def load_or_create_salt(db_path: str) -> bytes:
-#         salt_path = db_path + ".salt"
-#         if os.path.exists(salt_path):
-#             with open(salt_path, "rb") as f:
-#                 return f.read()
-#         salt = os.urandom(16)
-#         with open(salt_path, "wb") as f:
-#             f.write(salt)
-#         return salt
-
-#     @staticmethod
-#     def load_algo(db_path: str) -> Optional[str]:
-#         algo_path = db_path + ".algo"
-#         if os.path.exists(algo_path):
-#             with open(algo_path, "r") as f:
-#                 return f.read().strip()
-#         return None
-
-#     @staticmethod
-#     def save_algo(db_path: str, algo: str) -> None:
-#         with open(db_path + ".algo", "w") as f:
-#             f.write(algo)
-
-#     def add_password(self, username: str, enc_password: str) -> None:
-#         conn = sqlite3.connect(self.db_path)
-#         cursor = conn.cursor()
-#         cursor.execute(
-#             "INSERT INTO passwords (username, password) VALUES (?, ?)",
-#             (username, enc_password)
-#         )
-#         conn.commit()
-#         conn.close()
-
-#     def get_password(self, username: str) -> Optional[str]:
-#         conn = sqlite3.connect(self.db_path)
-#         cursor = conn.cursor()
-#         cursor.execute(
-#             "SELECT password FROM passwords WHERE username = ?",
-#             (username,)
-#         )
-#         row = cursor.fetchone()
-#         conn.close()
-#         return row[0] if row else None
-
-#     def list_passwords(self) -> List[Tuple[str, str]]:
-#         conn = sqlite3.connect(self.db_path)
-#         cursor = conn.cursor()
-#         cursor.execute("SELECT username, password FROM passwords")
-#         rows = cursor.fetchall()
-#         conn.close()
-#         return rows
-
-#     def delete_password(self, username: str) -> int:
-#         conn = sqlite3.connect(self.db_path)
-#         cursor = conn.cursor()
-#         cursor.execute(
-#             "DELETE FROM passwords WHERE username = ?",
-#             (username,)
-#         )
-#         affected = cursor.rowcount
-#         conn.commit()
-#         conn.close()
-
 # storage.py
 import sqlite3
 import os
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 from crypto_utils import (
     derive_key, 
     encrypt_aes_gcm, decrypt_aes_gcm,
@@ -100,23 +10,17 @@ from crypto_utils import (
 )
 
 class InvalidPasswordException(Exception):
-    """Exceção personalizada para quando a password mestra está errada."""
     pass
 
 class PasswordDatabase:
     def __init__(self, db_path: str):
-        """Inicializa a conexão com a BD, mas não a desbloqueia ainda."""
         self.db_path = db_path
-        self.key: Optional[bytes] = None  # A chave fica aqui quando desbloqueada
-        self.encryption_algo = "aes-gcm"  # Algoritmo predefinido
+        self.key: Optional[bytes] = None
+        self.encryption_algo = "aes-gcm"
         self._init_db_structure()
 
     def _init_db_structure(self):
-        """
-        Cria as tabelas necessárias se o ficheiro for novo.
-        'metadata': Guarda configurações (Salt, Algo, Validação).
-        'passwords': Guarda os dados do utilizador (ambos encriptados).
-        """
+        """Cria tabelas. Inclui agora a coluna 'folder'."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -127,173 +31,147 @@ class PasswordDatabase:
             );
         """)
         
-        # Nota: 'username' não é UNIQUE aqui porque, quando encriptado, 
-        # o mesmo nome gera strings diferentes (devido ao nonce aleatório).
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS passwords (
+            CREATE TABLE IF NOT EXISTS entries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL,
+                folder TEXT,
+                title TEXT NOT NULL,
+                url TEXT,
+                username TEXT,
                 password TEXT NOT NULL
             );
         """)
         conn.commit()
         conn.close()
 
-    # --- Funções Internas de Criptografia ---
+    # --- Criptografia Interna ---
     def _encrypt_data(self, plaintext: str) -> str:
-        """Helper que escolhe a função de cifrar correta baseada na configuração."""
-        if self.encryption_algo == "aes-gcm":
-            return encrypt_aes_gcm(self.key, plaintext)
-        elif self.encryption_algo == "chacha20":
-            return encrypt_chacha20(self.key, plaintext)
-        elif self.encryption_algo == "fernet":
-            return encrypt_fernet(self.key, plaintext)
-        else:
-            raise ValueError(f"Algoritmo não suportado: {self.encryption_algo}")
+        if not plaintext: return ""
+        if self.encryption_algo == "aes-gcm": return encrypt_aes_gcm(self.key, plaintext)
+        elif self.encryption_algo == "chacha20": return encrypt_chacha20(self.key, plaintext)
+        elif self.encryption_algo == "fernet": return encrypt_fernet(self.key, plaintext)
+        else: raise ValueError(f"Algoritmo não suportado: {self.encryption_algo}")
 
     def _decrypt_data(self, ciphertext: str) -> str:
-        """Helper que escolhe a função de decifrar correta."""
-        if self.encryption_algo == "aes-gcm":
-            return decrypt_aes_gcm(self.key, ciphertext)
-        elif self.encryption_algo == "chacha20":
-            return decrypt_chacha20(self.key, ciphertext)
-        elif self.encryption_algo == "fernet":
-            return decrypt_fernet(self.key, ciphertext)
-        else:
-            raise ValueError(f"Algoritmo não suportado: {self.encryption_algo}")
+        if not ciphertext: return ""
+        if self.encryption_algo == "aes-gcm": return decrypt_aes_gcm(self.key, ciphertext)
+        elif self.encryption_algo == "chacha20": return decrypt_chacha20(self.key, ciphertext)
+        elif self.encryption_algo == "fernet": return decrypt_fernet(self.key, ciphertext)
+        else: raise ValueError(f"Algoritmo não suportado: {self.encryption_algo}")
 
-    # --- Gestão da Base de Dados ---
+    # --- Setup ---
     def create_new(self, password: str, algo: str = "aes-gcm"):
-        """
-        Configura uma base de dados nova.
-        1. Gera um Salt aleatório.
-        2. Guarda o algoritmo escolhido.
-        3. Cria um token de validação encriptado para testar a password no futuro.
-        """
         self.encryption_algo = algo
         salt = os.urandom(16)
         key = derive_key(password, salt)
         self.key = key 
         
-        # Ciframos a palavra "CHECK_VALID". Se no futuro conseguirmos ler isto, a password está certa.
         validation_token = self._encrypt_data("CHECK_VALID")
         
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
-        # Guardamos as configurações na tabela metadata
         cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)", ("salt", salt))
         cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)", ("algo", algo.encode()))
         cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)", ("validation", validation_token.encode()))
-        
         conn.commit()
         conn.close()
 
     def unlock(self, password: str):
-        """
-        Tenta abrir uma BD existente.
-        1. Lê o Salt e o Algoritmo do ficheiro.
-        2. Tenta decifrar o token de validação.
-        3. Se falhar, levanta InvalidPasswordException.
-        """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        # Recuperar Salt
         cursor.execute("SELECT value FROM metadata WHERE key='salt'")
         row_salt = cursor.fetchone()
         if not row_salt:
             conn.close()
-            raise ValueError("Ficheiro inválido ou corrompido (sem Salt).")
+            raise ValueError("Ficheiro inválido (Salt em falta).")
         salt = row_salt[0]
         
-        # Recuperar Algoritmo
         cursor.execute("SELECT value FROM metadata WHERE key='algo'")
         row_algo = cursor.fetchone()
-        if row_algo:
-            self.encryption_algo = row_algo[0].decode()
-        else:
-            self.encryption_algo = "aes-gcm" # Fallback para versões antigas
+        if row_algo: self.encryption_algo = row_algo[0].decode()
+        else: self.encryption_algo = "aes-gcm"
 
-        # Recuperar Token de Validação
         cursor.execute("SELECT value FROM metadata WHERE key='validation'")
         row_val = cursor.fetchone()
         conn.close()
 
-        # Derivar a chave
         key = derive_key(password, salt)
-        self.key = key # Definimos temporariamente
+        self.key = key 
 
-        # Validar
         if row_val:
             validation_token = row_val[0].decode()
             try:
                 check = self._decrypt_data(validation_token)
-                if check != "CHECK_VALID":
-                    raise InvalidPasswordException()
+                if check != "CHECK_VALID": raise InvalidPasswordException()
             except Exception:
-                self.key = None # Limpa a chave se falhar
+                self.key = None
                 raise InvalidPasswordException("Password incorreta.")
-        
-        # Se chegou aqui, a chave é válida.
 
-    def add_password(self, username: str, password_text: str) -> None:
-        """Cifra o username e a password e insere na BD."""
+    # --- CRUD (Create, Read, Update, Delete) ---
+    def add_entry(self, folder: str, title: str, url: str, username: str, password_text: str) -> None:
         if not self.key: raise Exception("Base de dados bloqueada.")
             
-        enc_username = self._encrypt_data(username)
-        enc_password = self._encrypt_data(password_text)
+        enc_folder = self._encrypt_data(folder)
+        enc_title = self._encrypt_data(title)
+        enc_url = self._encrypt_data(url)
+        enc_user = self._encrypt_data(username)
+        enc_pass = self._encrypt_data(password_text)
         
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO passwords (username, password) VALUES (?, ?)", (enc_username, enc_password))
+        cursor.execute(
+            "INSERT INTO entries (folder, title, url, username, password) VALUES (?, ?, ?, ?, ?)",
+            (enc_folder, enc_title, enc_url, enc_user, enc_pass)
+        )
         conn.commit()
         conn.close()
 
-    def list_passwords(self) -> List[Tuple[str, str]]:
-        """Lê todas as linhas, decifra e retorna uma lista de tuplos (user, pass)."""
+    def list_entries(self) -> List[Dict[str, str]]:
         if not self.key: raise Exception("Base de dados bloqueada.")
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        cursor.execute("SELECT username, password FROM passwords")
+        cursor.execute("SELECT folder, title, url, username, password FROM entries")
         rows = cursor.fetchall()
         conn.close()
         
-        decoded_rows = []
-        for enc_user, enc_pass in rows:
+        decoded_list = []
+        for enc_folder, enc_title, enc_url, enc_user, enc_pass in rows:
             try:
-                user = self._decrypt_data(enc_user)
-                pwd = self._decrypt_data(enc_pass)
-                decoded_rows.append((user, pwd))
+                decoded_list.append({
+                    "folder": self._decrypt_data(enc_folder),
+                    "title": self._decrypt_data(enc_title),
+                    "url": self._decrypt_data(enc_url),
+                    "username": self._decrypt_data(enc_user),
+                    "password": self._decrypt_data(enc_pass)
+                })
             except:
-                continue # Ignora dados corrompidos
-        return decoded_rows
+                continue
+        # Ordena por pasta e depois por título
+        decoded_list.sort(key=lambda x: (x["folder"], x["title"]))
+        return decoded_list
 
-    def get_password(self, target_username: str) -> Optional[str]:
-        """Procura um username específico e devolve a password."""
-        if not self.key: raise Exception("Base de dados bloqueada.")
-        
-        # Como o username está encriptado, temos de carregar tudo e procurar na memória
-        all_creds = self.list_passwords()
-        for user, pwd in all_creds:
-            if user == target_username:
-                return pwd
+    def get_entry_by_title(self, target_title: str) -> Optional[Dict[str, str]]:
+        """Procura uma entrada pelo título exato (em memória)."""
+        all_entries = self.list_entries()
+        for entry in all_entries:
+            if entry["title"] == target_title:
+                return entry
         return None
 
-    def delete_password(self, target_username: str) -> int:
-        """Encontra o ID correspondente ao username e apaga-o."""
+    def delete_entry(self, target_title: str) -> int:
         if not self.key: raise Exception("Base de dados bloqueada.")
         
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        cursor.execute("SELECT id, username FROM passwords")
+        cursor.execute("SELECT id, title FROM entries")
         rows = cursor.fetchall()
         
         id_to_delete = None
-        for row_id, enc_user in rows:
+        for row_id, enc_title in rows:
             try:
-                dec_user = self._decrypt_data(enc_user)
-                if dec_user == target_username:
+                dec_title = self._decrypt_data(enc_title)
+                if dec_title == target_title:
                     id_to_delete = row_id
                     break
             except:
@@ -301,9 +179,18 @@ class PasswordDatabase:
         
         affected = 0
         if id_to_delete:
-            cursor.execute("DELETE FROM passwords WHERE id = ?", (id_to_delete,))
+            cursor.execute("DELETE FROM entries WHERE id = ?", (id_to_delete,))
             affected = cursor.rowcount
             conn.commit()
             
         conn.close()
         return affected
+    
+    def get_all_folders(self) -> List[str]:
+        """Retorna uma lista única de todas as pastas existentes para o Combobox."""
+        entries = self.list_entries()
+        folders = set()
+        for e in entries:
+            if e["folder"]: 
+                folders.add(e["folder"])
+        return sorted(list(folders))
