@@ -6,6 +6,7 @@ import string
 import math
 import time
 import pyperclip  # pip install pyperclip
+import random     # Necessário para o teclado virtual
 
 from storage import PasswordDatabase, InvalidPasswordException
 
@@ -29,26 +30,140 @@ def generate_strong_password(length=16, use_upper=True, use_digits=True, use_sym
     if not chars: return ""
     return ''.join(secrets.choice(chars) for _ in range(length))
 
+# ================= Teclado Virtual Anti-Keylogger =================
+
+def open_virtual_keyboard(parent, target_entry, on_key_press=None):
+    vk = tk.Toplevel(parent)
+    vk.title("Teclado Seguro")
+    vk.geometry("550x330")
+    vk.resizable(False, False)
+    vk.attributes('-topmost', True) 
+
+    lbl_preview = tk.Label(vk, text="Inserção Segura...", font=("Arial", 10, "italic"), fg="gray")
+    lbl_preview.pack(pady=5)
+
+    keys_lower = list(string.ascii_lowercase)
+    keys_upper = list(string.ascii_uppercase)
+    keys_digits = list(string.digits)
+    keys_symbols = list("!@#$%^&*()_+-=[]{}|;:,.<>?/")
+
+    current_keys = keys_lower + keys_digits 
+    is_shifted = False
+
+    frame_keys = tk.Frame(vk)
+    frame_keys.pack(pady=10, padx=10)
+
+    def insert_char(char):
+        target_entry.insert(tk.END, char)
+        lbl_preview.config(text=f"Inserido: (Protegido)", fg="green")
+        if on_key_press:
+            on_key_press()
+
+    def refresh_layout():
+        for widget in frame_keys.winfo_children():
+            widget.destroy()
+
+        row = 0
+        col = 0
+        max_cols = 12
+
+        for char in current_keys:
+            btn = tk.Button(frame_keys, text=char, width=4, height=2, 
+                            command=lambda c=char: insert_char(c))
+            btn.grid(row=row, column=col, padx=2, pady=2)
+            
+            col += 1
+            if col >= max_cols:
+                col = 0
+                row += 1
+
+    def toggle_shift():
+        nonlocal is_shifted, current_keys
+        is_shifted = not is_shifted
+        if is_shifted:
+            current_keys = keys_upper + keys_symbols
+            btn_shift.config(bg="#aaccff", relief="sunken")
+        else:
+            current_keys = keys_lower + keys_digits
+            btn_shift.config(bg="#f0f0f0", relief="raised")
+        refresh_layout()
+
+    def shuffle_keys():
+        random.shuffle(current_keys)
+        refresh_layout()
+
+    def backspace():
+        current_pos = target_entry.index(tk.INSERT)
+        if current_pos > 0:
+            target_entry.delete(current_pos - 1)
+            if on_key_press:
+                on_key_press()
+
+    frame_controls = tk.Frame(vk)
+    frame_controls.pack(fill="x", side="bottom", pady=10, padx=10)
+
+    btn_shift = tk.Button(frame_controls, text="SHIFT / Símbolos", command=toggle_shift, height=2, width=15)
+    btn_shift.pack(side="left", padx=5)
+
+    tk.Button(frame_controls, text="🔀 Baralhar", command=shuffle_keys, height=2, width=10).pack(side="left", padx=5)
+    tk.Button(frame_controls, text="⌫ Apagar", command=backspace, height=2, width=10, bg="#ffdddd").pack(side="left", padx=5)
+    tk.Button(frame_controls, text="Fechar", command=vk.destroy, height=2, width=10).pack(side="right", padx=5)
+
+    refresh_layout()
+
 # ================= Diálogos Auxiliares =================
 
 def ask_master_password(prompt: str) -> str:
-    root = tk.Tk()
-    root.withdraw()
-    pw = simpledialog.askstring("Segurança", prompt, show="*")
-    root.destroy()
-    return pw
+    dialog = tk.Tk()
+    dialog.title("Segurança")
+    dialog.geometry("400x180")
+    dialog.resizable(False, False)
+    
+    result = {"pw": None}
+
+    tk.Label(dialog, text=prompt, wraplength=350).pack(pady=15)
+    
+    frame_entry = tk.Frame(dialog)
+    frame_entry.pack(pady=5)
+    
+    entry = tk.Entry(frame_entry, show="*", width=30)
+    entry.pack(side="left", padx=5)
+    
+    tk.Button(frame_entry, text="⌨", command=lambda: open_virtual_keyboard(dialog, entry)).pack(side="left")
+    
+    def on_ok():
+        result["pw"] = entry.get()
+        dialog.destroy()
+        
+    def on_cancel():
+        dialog.destroy()
+
+    frame_btns = tk.Frame(dialog)
+    frame_btns.pack(pady=15)
+    tk.Button(frame_btns, text="OK", command=on_ok, width=10, bg="#ddffdd").pack(side="left", padx=10)
+    tk.Button(frame_btns, text="Cancelar", command=on_cancel, width=10).pack(side="left", padx=10)
+
+    dialog.bind('<Return>', lambda e: on_ok())
+    entry.focus_set()
+    dialog.mainloop()
+    
+    return result["pw"]
 
 def ask_new_db_config(title: str):
     dialog = tk.Tk()
     dialog.title(title)
-    dialog.geometry("300x230")
+    dialog.geometry("350x250")
     dialog.resizable(False, False)
     
     result = {"password": None, "algo": "aes-gcm"}
     
     tk.Label(dialog, text="Password Mestra:").pack(pady=(15, 5))
-    entry_pw = tk.Entry(dialog, show="*", width=25)
-    entry_pw.pack(pady=5)
+    
+    frame_pw = tk.Frame(dialog)
+    frame_pw.pack(pady=5)
+    entry_pw = tk.Entry(frame_pw, show="*", width=25)
+    entry_pw.pack(side="left", padx=2)
+    tk.Button(frame_pw, text="⌨", command=lambda: open_virtual_keyboard(dialog, entry_pw)).pack(side="left")
     
     tk.Label(dialog, text="Algoritmo de Encriptação:").pack(pady=(10, 5))
     combo_algo = ttk.Combobox(dialog, values=["aes-gcm", "chacha20", "fernet"], state="readonly")
@@ -184,7 +299,6 @@ def launch_app(pdb: PasswordDatabase):
     style.configure("Yellow.Horizontal.TProgressbar", foreground='#FFAA00', background='#FFAA00')
     style.configure("Green.Horizontal.TProgressbar", foreground='green', background='green')
     
-    # Estilo Treeview (Árvore)
     style.configure("Treeview", font=('Arial', 10), rowheight=25)
     style.configure("Treeview.Heading", font=('Arial', 10, 'bold'))
 
@@ -205,33 +319,39 @@ def launch_app(pdb: PasswordDatabase):
     app.bind_all("<Any-Button>", reset_timer)
     app.after(1000, check_inactivity)
 
-    # --- Layout Esquerdo (Árvore de Pastas) ---
+    # --- Layout Esquerdo ---
     frame_left = tk.Frame(app)
     frame_left.grid(row=0, column=0, rowspan=4, padx=15, pady=15, sticky="nsew") 
     
-    # Configuração de pesos para a janela redimensionar bem
     app.grid_columnconfigure(0, weight=1)
     app.grid_columnconfigure(1, weight=2)
     app.grid_rowconfigure(0, weight=1)
+
+    # Pesquisa
+    frame_search = tk.Frame(frame_left)
+    frame_search.pack(fill="x", pady=(0, 10))
+    tk.Label(frame_search, text="🔍").pack(side="left")
+    entry_search = tk.Entry(frame_search)
+    entry_search.pack(side="left", fill="x", expand=True, padx=5)
 
     tk.Label(frame_left, text="As Minhas Pastas", font=("Arial", 10, "bold")).pack(anchor="w")
     
     # Treeview
     tree = ttk.Treeview(frame_left, columns=("type"), show="tree", selectmode="browse")
-    tree.pack(side="left", fill="both", expand=True)
+    # Agora usamos side="top" para deixar espaço em baixo para o botão de auditoria
+    tree.pack(side="top", fill="both", expand=True)
     
     scrollbar = tk.Scrollbar(frame_left, orient="vertical", command=tree.yview)
-    scrollbar.pack(side="right", fill="y")
+    scrollbar.pack(side="right", fill="y", before=tree) # 'before' garante que fica ao lado da tree
     tree.config(yscrollcommand=scrollbar.set)
 
-    # --- Layout Direito (Formulário) ---
+    # --- Layout Direito ---
     frame_right = tk.Frame(app)
     frame_right.grid(row=0, column=1, padx=20, pady=15, sticky="n")
 
     def create_row(label_text, row):
         tk.Label(frame_right, text=label_text).grid(row=row, column=0, padx=5, pady=5, sticky="e")
         if label_text == "Pasta / Categoria:":
-            # Combobox para as pastas
             entry = ttk.Combobox(frame_right, width=43)
         else:
             entry = tk.Entry(frame_right, width=45)
@@ -268,13 +388,16 @@ def launch_app(pdb: PasswordDatabase):
             lbl_entropy.config(text=f"Forte ({int(bits)} bits)", fg="green")
     entry_password.bind("<KeyRelease>", update_entropy)
 
+    # --- Barra de Ferramentas do lado Direito ---
     frame_tools = tk.Frame(frame_right)
     frame_tools.grid(row=4, column=2, padx=5, sticky="w")
     
+    # 1. Mostrar/Esconder
     def toggle_pw():
         entry_password.config(show='' if entry_password.cget('show') == '*' else '*')
     tk.Button(frame_tools, text="👁", command=toggle_pw, width=3).pack(side="left", padx=1)
 
+    # 2. Gerar
     def gen_pw():
         pw = open_generator_dialog(app)
         if pw:
@@ -283,6 +406,12 @@ def launch_app(pdb: PasswordDatabase):
             update_entropy()
     tk.Button(frame_tools, text="⚙", command=gen_pw, width=3).pack(side="left", padx=1)
 
+    # 3. Teclado Virtual
+    def open_kb():
+        open_virtual_keyboard(app, entry_password, on_key_press=lambda: update_entropy())
+    tk.Button(frame_tools, text="⌨", command=open_kb, width=3).pack(side="left", padx=1)
+
+    # 4. Copiar
     def copy_pw():
         pw = entry_password.get()
         if pw:
@@ -290,6 +419,87 @@ def launch_app(pdb: PasswordDatabase):
             messagebox.showinfo("Info", "Password copiada (30s limpa).")
             app.after(30000, lambda: pyperclip.copy("") if pyperclip.paste() == pw else None)
     tk.Button(frame_tools, text="📋", command=copy_pw, width=3).pack(side="left", padx=1)
+
+    # ================= FUNCIONALIDADE: AUDITORIA EM JANELA NOVA =================
+    
+    def load_item_by_title(title):
+        data = pdb.get_entry_by_title(title)
+        if data:
+            nonlocal selected_old_title
+            selected_old_title = data["title"]
+            entry_folder.set(data["folder"])
+            entry_title.delete(0, tk.END)
+            entry_title.insert(0, data["title"])
+            entry_url.delete(0, tk.END)
+            entry_url.insert(0, data["url"])
+            entry_user.delete(0, tk.END)
+            entry_user.insert(0, data["username"])
+            entry_password.delete(0, tk.END)
+            entry_password.insert(0, data["password"])
+            update_entropy()
+
+    def open_audit_window():
+        audit_win = tk.Toplevel(app)
+        audit_win.title("Auditoria de Reutilização de Passwords")
+        audit_win.geometry("600x400")
+        
+        tk.Label(audit_win, text="Contas com a mesma Password:", font=("Arial", 12, "bold"), fg="#d9534f").pack(pady=10)
+        tk.Label(audit_win, text="(Duplo clique num registo para editar)", font=("Arial", 9, "italic")).pack()
+
+        # Treeview para a auditoria
+        cols = ("Username", "Pasta")
+        audit_tree = ttk.Treeview(audit_win, columns=cols, show="tree headings")
+        audit_tree.heading("#0", text="Grupos de Risco")
+        audit_tree.heading("Username", text="Utilizador")
+        audit_tree.heading("Pasta", text="Pasta")
+        audit_tree.column("#0", width=250)
+        
+        audit_tree.pack(fill="both", expand=True, padx=10, pady=10)
+
+        entries = pdb.list_entries()
+        pass_map = {} 
+
+        for item in entries:
+            pwd = item['password']
+            if not pwd: continue
+            if pwd in pass_map:
+                pass_map[pwd].append(item)
+            else:
+                pass_map[pwd] = [item]
+        
+        reused_count = 0
+        group_idx = 1
+        
+        for pwd, items in pass_map.items():
+            if len(items) > 1:
+                reused_count += 1
+                # NÓ PAI GENÉRICO (SEM PASSWORD)
+                display_text = f"⚠️ Grupo de Risco #{group_idx} ({len(items)} contas)"
+                parent_id = audit_tree.insert("", "end", text=display_text, open=True)
+                group_idx += 1
+                
+                for item in items:
+                    audit_tree.insert(parent_id, "end", text=item['title'], values=(item['username'], item['folder']), tags=(item['title'],))
+
+        if reused_count == 0:
+            tk.Label(audit_win, text="Excelente! Nenhuma reutilização encontrada.", fg="green").pack()
+        
+        def on_audit_double_click(event):
+            item_id = audit_tree.selection()[0]
+            vals = audit_tree.item(item_id, "values")
+            if vals:
+                title_to_load = audit_tree.item(item_id, "text")
+                load_item_by_title(title_to_load)
+                audit_win.destroy()
+                messagebox.showinfo("Editar", f"Carregado: {title_to_load}\nAltere a password agora.")
+
+        audit_tree.bind("<Double-1>", on_audit_double_click)
+
+    # --- BOTÃO DE AUDITORIA NO FUNDO DO FRAME ESQUERDO ---
+    frame_audit_btn = tk.Frame(frame_left)
+    frame_audit_btn.pack(side="bottom", fill="x", padx=10, pady=10)
+    
+    tk.Button(frame_audit_btn, text="♻ Verificar Passwords Repetidas", command=open_audit_window, bg="#ffebcd").pack(fill="x")
 
     # --- Lógica CRUD ---
 
@@ -302,49 +512,50 @@ def launch_app(pdb: PasswordDatabase):
         entry_user.delete(0, tk.END)
         entry_password.delete(0, tk.END)
         update_entropy()
-        
-        # Remove seleção visual da árvore
         for item in tree.selection():
             tree.selection_remove(item)
 
-    def refresh_list():
-        # Limpar árvore visual
+    def refresh_list(search_query=""):
         for item in tree.get_children():
             tree.delete(item)
             
-        # Obter dados
         entries = pdb.list_entries()
-        
-        # Atualizar a Combobox com pastas existentes
         existing_folders = pdb.get_all_folders()
         entry_folder['values'] = existing_folders
+
+        if search_query:
+            query = search_query.lower()
+            for item in entries:
+                title = item["title"]
+                folder = item["folder"]
+                if (query in title.lower()) or (query in folder.lower()) or (query in item["username"].lower()):
+                    display_text = f"{title}   [{folder if folder else 'Geral'}]"
+                    tree.insert("", "end", text=display_text, values=("entry", title)) 
+            return
         
-        # Dicionário para gerir IDs das pastas na Treeview
         folder_nodes = {}
-        
-        # Nó para "Geral" (Sem pasta)
         root_general = tree.insert("", "end", text="Geral / Sem Pasta", open=True)
         
         for item in entries:
             folder = item["folder"]
             title = item["title"]
             
-            # Determinar quem é o pai deste item
             if folder:
                 if folder not in folder_nodes:
-                    # Cria o nó da pasta se não existe
                     folder_id = tree.insert("", "end", text=folder, open=True)
                     folder_nodes[folder] = folder_id
                 parent_id = folder_nodes[folder]
             else:
                 parent_id = root_general
             
-            # Adiciona o Item como FILHO da Pasta
-            # 'values=("entry")' serve para distinguirmos que é um item e não uma pasta
-            tree.insert(parent_id, "end", text=title, values=("entry"))
+            tree.insert(parent_id, "end", text=title, values=("entry", title))
+
+    def on_search(event):
+        query = entry_search.get().strip()
+        refresh_list(query)
+    entry_search.bind("<KeyRelease>", on_search)
 
     def on_add():
-        """Adicionar novo item."""
         folder = entry_folder.get().strip()
         title = entry_title.get().strip()
         url = entry_url.get().strip()
@@ -362,13 +573,13 @@ def launch_app(pdb: PasswordDatabase):
         try:
             pdb.add_entry(folder, title, url, user, pw)
             messagebox.showinfo("Sucesso", "Adicionado.")
+            entry_search.delete(0, tk.END)
             refresh_list()
             clear_form()
         except Exception as e:
             messagebox.showerror("Erro", str(e))
 
     def on_update():
-        """Atualizar item existente."""
         nonlocal selected_old_title
         if selected_old_title is None:
             messagebox.showwarning("Aviso", "Selecione um item (filho de uma pasta) para editar.")
@@ -384,17 +595,16 @@ def launch_app(pdb: PasswordDatabase):
             messagebox.showwarning("Erro", "Título e Password são obrigatórios.")
             return
 
-        # Verificar colisão de nomes se o título mudou
         if new_title != selected_old_title:
             if pdb.get_entry_by_title(new_title) is not None:
                 messagebox.showerror("Erro", f"Já existe outro item com o nome '{new_title}'.")
                 return
 
         try:
-            # Apaga o antigo, cria o novo
             pdb.delete_entry(selected_old_title)
             pdb.add_entry(new_folder, new_title, url, user, pw)
             messagebox.showinfo("Sucesso", "Atualizado.")
+            entry_search.delete(0, tk.END)
             refresh_list()
             clear_form()
         except Exception as e:
@@ -408,48 +618,33 @@ def launch_app(pdb: PasswordDatabase):
         
         if messagebox.askyesno("Apagar", f"Eliminar '{target}'?"):
             pdb.delete_entry(target)
+            entry_search.delete(0, tk.END)
             refresh_list()
             clear_form()
 
     def on_tree_select(event):
-        """Carrega dados para o form ao clicar na árvore."""
         nonlocal selected_old_title
-        
         selected_items = tree.selection()
         if not selected_items: return
-        
         item_id = selected_items[0]
-        item_text = tree.item(item_id, "text")
         item_values = tree.item(item_id, "values")
         
-        # Verificar se é item ou pasta
-        is_entry = False
-        if item_values and item_values[0] == "entry":
-            is_entry = True
-            
-        if not is_entry:
-            # Clicou numa pasta -> limpa o form
+        if not (item_values and item_values[0] == "entry"):
             clear_form()
             return
 
-        # Clicou num item válido
-        title = item_text
-        data = pdb.get_entry_by_title(title)
+        real_title = item_values[1]
+        data = pdb.get_entry_by_title(real_title)
         
         if data:
             selected_old_title = data["title"]
-            
             entry_folder.set(data["folder"])
-            
             entry_title.delete(0, tk.END)
             entry_title.insert(0, data["title"])
-            
             entry_url.delete(0, tk.END)
             entry_url.insert(0, data["url"])
-            
             entry_user.delete(0, tk.END)
             entry_user.insert(0, data["username"])
-            
             entry_password.delete(0, tk.END)
             entry_password.insert(0, data["password"])
             update_entropy()
