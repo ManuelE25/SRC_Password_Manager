@@ -46,7 +46,7 @@ def gerar_password_avancada(tamanho, usar_lower, usar_upper, usar_digits, usar_s
 def abrir_gerador_passwords():
     # Janela flutuante para configurar a geração
     win = tk.Toplevel(APP_ESTADO["root"])
-    win.title("Gerador Avançado")
+    win.title("Password generator")
     win.geometry("380x350")
     
     # --- CORREÇÃO AQUI ---
@@ -95,17 +95,17 @@ def abrir_gerador_passwords():
     frame_btns = tk.Frame(win)
     frame_btns.pack(pady=10)
     
-    tk.Button(frame_btns, text="🔄 Regenerar", command=gerar).pack(side="left", padx=5)
-    tk.Button(frame_btns, text="✅ Usar Esta password", command=usar, bg="#ddffdd", height=2).pack(side="left", padx=5)
+    tk.Button(frame_btns, text="Regenerar", command=gerar).pack(side="left", padx=5)
+    tk.Button(frame_btns, text="Usar Esta password", command=usar, bg="#ddffdd", height=2).pack(side="left", padx=5)
     
     gerar()
 def abrir_teclado_virtual(entry_alvo):
     win = tk.Toplevel(APP_ESTADO["root"])
-    win.title("Teclado Seguro")
+    win.title("Teclado virtual")
     win.geometry("600x350")
     win.attributes('-topmost', True)
     
-    lbl_info = tk.Label(win, text="Inserção Segura...", fg="gray")
+    lbl_info = tk.Label(win, text="Teclado virtual", fg="gray")
     lbl_info.pack(pady=5)
     
     frame_teclas = tk.Frame(win)
@@ -154,7 +154,7 @@ def abrir_teclado_virtual(entry_alvo):
 
 def abrir_auditoria():
     win = tk.Toplevel(APP_ESTADO["root"])
-    win.title("Auditoria: passwords Repetidas")
+    win.title("Passwords repetidas")
     win.geometry("600x400")
     
     tk.Label(win, text="Contas com a mesma password:", font=("Arial", 12, "bold"), fg="red").pack(pady=10)
@@ -464,7 +464,7 @@ def abrir_janela_principal(algo_nome):
 
 def menu_inicial():
     root = tk.Tk()
-    root.title("Gestor Seguro")
+    root.title("SRC Passoword Manager")
     root.geometry("350x200")
     
     escolha = {"tipo": None}
@@ -473,8 +473,8 @@ def menu_inicial():
     def ir_criar(): escolha["tipo"] = "criar"; root.destroy()
 
     tk.Label(root, text="Gestor de Passwords", font=("Arial", 14, "bold")).pack(pady=20)
-    tk.Button(root, text="Abrir cofre existente", command=ir_abrir, width=20).pack(pady=5)
-    tk.Button(root, text="Criar novo cofre", command=ir_criar, width=20).pack(pady=5)
+    tk.Button(root, text="Abrir base de dados existente", command=ir_abrir, width=20).pack(pady=6)
+    tk.Button(root, text="Criar nova base de dados", command=ir_criar, width=20).pack(pady=6)
     root.mainloop()
     
     if not escolha["tipo"]: return # Fechou a janela
